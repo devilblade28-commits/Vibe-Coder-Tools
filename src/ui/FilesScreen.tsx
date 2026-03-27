@@ -1,14 +1,15 @@
 import { useState } from 'react'
 import {
   FilePlus, ChevronRight, ChevronDown,
-  MoreHorizontal, ChevronLeft, FileText, Image, Folder,
+  MoreHorizontal, ChevronLeft, FileText, Image, Folder, Upload,
 } from 'lucide-react'
-import type { ProjectFile, ProjectFolder, FileSystemUIState } from '../types'
+import type { ProjectFile, ProjectFolder, ProjectAsset, FileSystemUIState } from '../types'
 import { getFileExtension } from '../workspace/projectService'
 
 interface FilesScreenProps {
   files: ProjectFile[]
   folders: ProjectFolder[]
+  assets: ProjectAsset[]
   activeFileId: string | null
   uiState: FileSystemUIState
   onUiStateChange: (state: FileSystemUIState) => void
@@ -16,6 +17,7 @@ interface FilesScreenProps {
   onCreateFile: (name: string) => void
   onDeleteFile: (file: ProjectFile) => void
   onUpdateContent: (fileId: string, content: string) => void
+  onOpenImport: () => void
 }
 
 // File type colors matching VS Code conventions
@@ -47,8 +49,8 @@ function FileTypeIcon({ name }: { name: string }) {
 }
 
 export function FilesScreen({
-  files, folders, activeFileId, uiState, onUiStateChange,
-  onSelectFile, onCreateFile, onDeleteFile, onUpdateContent,
+  files, folders, assets, activeFileId, uiState, onUiStateChange,
+  onSelectFile, onCreateFile, onDeleteFile, onUpdateContent, onOpenImport,
 }: FilesScreenProps) {
   const { view, expandedFolderIds, isCreatingFile } = uiState
   const [newFileName, setNewFileName] = useState('')
@@ -107,27 +109,35 @@ export function FilesScreen({
           <span style={{ fontSize: '12px', fontWeight: 600, color: '#6d6d7a', textTransform: 'uppercase', letterSpacing: '0.08em', flex: 1 }}>
             Files {files.length > 0 && <span style={{ color: '#4a4a54', fontWeight: 400 }}>({files.length})</span>}
           </span>
-          {/* New File — always visible */}
-          <button
-            onClick={showCreate}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '5px',
-              height: '32px',
-              padding: '0 10px',
-              background: '#1c1c1f',
-              border: '1px solid #2a2a30',
-              borderRadius: '7px',
-              color: '#a855f7',
-              fontSize: '12px',
-              fontWeight: 600,
-              WebkitTapHighlightColor: 'transparent',
-            }}
-          >
-            <FilePlus size={13} />
-            New file
-          </button>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <button
+              onClick={onOpenImport}
+              title="Import files"
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                width: '32px', height: '32px',
+                background: '#1c1c1f', border: '1px solid #2a2a30',
+                borderRadius: '7px', color: '#6d6d7a',
+                WebkitTapHighlightColor: 'transparent',
+              }}
+            >
+              <Upload size={13} />
+            </button>
+            <button
+              onClick={showCreate}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '5px',
+                height: '32px', padding: '0 10px',
+                background: '#1c1c1f', border: '1px solid #2a2a30',
+                borderRadius: '7px', color: '#a855f7',
+                fontSize: '12px', fontWeight: 600,
+                WebkitTapHighlightColor: 'transparent',
+              }}
+            >
+              <FilePlus size={13} />
+              New file
+            </button>
+          </div>
         </div>
 
         {/* New file input */}
@@ -222,8 +232,38 @@ export function FilesScreen({
             />
           ))}
 
+          {/* Assets section */}
+          {assets.length > 0 && (
+            <div>
+              <div style={{
+                height: '36px', display: 'flex', alignItems: 'center',
+                padding: '0 12px', gap: '6px',
+                borderTop: files.length > 0 ? '1px solid #1f1f23' : 'none',
+              }}>
+                <Image size={13} style={{ color: '#ab47bc', flexShrink: 0 }} />
+                <span style={{ fontSize: '11px', fontWeight: 600, color: '#4a4a54', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                  Assets ({assets.length})
+                </span>
+              </div>
+              {assets.map((asset) => (
+                <div key={asset.id} style={{
+                  height: '40px', display: 'flex', alignItems: 'center',
+                  padding: '0 12px 0 24px', gap: '8px',
+                }}>
+                  <Image size={14} style={{ color: '#ab47bc', flexShrink: 0 }} />
+                  <span style={{ fontSize: '12px', color: '#6d6d7a', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                    {asset.fileName}
+                  </span>
+                  <span style={{ fontSize: '10px', color: '#3d3d45', flexShrink: 0 }}>
+                    {(asset.size / 1024).toFixed(1)}KB
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Empty state */}
-          {files.length === 0 && !isCreatingFile && (
+          {files.length === 0 && assets.length === 0 && !isCreatingFile && (
             <div style={{ padding: '48px 24px', textAlign: 'center' }}>
               <div style={{ fontSize: '32px', marginBottom: '12px', opacity: 0.3 }}>📂</div>
               <p style={{ fontSize: '14px', color: '#4a4a54', margin: '0 0 4px', fontWeight: 500 }}>No files yet</p>

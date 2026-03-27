@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
-import { Send, Square, RotateCcw, Sparkles, Plus, Wrench, Palette, Copy, Check } from 'lucide-react'
-import type { ChatMessage, ActionExecutionResult } from '../types'
+import { Send, Square, RotateCcw, Copy, Check, Maximize2, X, Loader2 } from 'lucide-react'
+import type { ChatMessage, ActionExecutionResult, AIFileAction } from '../types'
 
 interface ChatScreenProps {
   messages: ChatMessage[]
@@ -9,19 +9,32 @@ interface ChatScreenProps {
   onStop: () => void
   onRetry: () => void
   error: string | null
-  /** Whether the active provider has an API key configured */
   hasApiKey: boolean
   onGoToSettings: () => void
+  onApplyAction: (action: AIFileAction) => Promise<{ success: boolean; error?: string }>
+  onOpenImport: () => void
 }
 
 const QUICK_ACTIONS = [
-  { label: '✨ Create App', prompt: 'Buat single-page app sederhana untuk project ini dengan HTML, CSS, dan JavaScript.' },
-  { label: '➕ Add Feature', prompt: 'Tambahkan fitur baru yang berguna ke app yang sudah ada.' },
-  { label: '🐛 Fix Bug', prompt: 'Periksa kode yang ada dan perbaiki bug atau masalah yang mungkin ada.' },
-  { label: '🎨 Improve UI', prompt: 'Perbaiki tampilan dan UX app ini agar lebih modern dan menarik.' },
+  { label: '✨ Create App', prompt: 'Buat single-page app sederhana untuk project ini. Buat file HTML, CSS, dan JS yang dibutuhkan.' },
+  { label: '➕ Add Feature', prompt: 'Tambahkan fitur baru yang relevan ke app yang sudah ada di project ini.' },
+  { label: '🐛 Fix Bug', prompt: 'Periksa semua file di project ini dan perbaiki bug atau error yang mungkin ada.' },
+  { label: '🎨 Improve UI', prompt: 'Perbaiki tampilan dan UX app ini. Buat lebih modern, rapi, dan mobile-friendly.' },
+  { label: '📁 Import Files', prompt: '__IMPORT__' },
 ]
 
-export function ChatScreen({ messages, isStreaming, onSend, onStop, onRetry, error, hasApiKey, onGoToSettings }: ChatScreenProps) {
+export function ChatScreen({
+  messages,
+  isStreaming,
+  onSend,
+  onStop,
+  onRetry,
+  error,
+  hasApiKey,
+  onGoToSettings,
+  onApplyAction,
+  onOpenImport,
+}: ChatScreenProps) {
   const [input, setInput] = useState('')
   const listRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -55,6 +68,14 @@ export function ChatScreen({ messages, isStreaming, onSend, onStop, onRetry, err
     e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px'
   }
 
+  const handleQuickAction = (prompt: string) => {
+    if (prompt === '__IMPORT__') {
+      onOpenImport()
+    } else {
+      onSend(prompt)
+    }
+  }
+
   const isEmpty = messages.length === 0
 
   return (
@@ -72,7 +93,7 @@ export function ChatScreen({ messages, isStreaming, onSend, onStop, onRetry, err
         }}
       >
         {isEmpty && (
-          <EmptyChat onSend={onSend} />
+          <EmptyChat onQuickAction={handleQuickAction} />
         )}
 
         {messages.map((msg, i) => (
@@ -81,6 +102,7 @@ export function ChatScreen({ messages, isStreaming, onSend, onStop, onRetry, err
             message={msg}
             isLast={i === messages.length - 1}
             onRetry={onRetry}
+            onApplyAction={onApplyAction}
           />
         ))}
 
@@ -119,6 +141,8 @@ export function ChatScreen({ messages, isStreaming, onSend, onStop, onRetry, err
               fontWeight: 600,
               whiteSpace: 'nowrap',
               flexShrink: 0,
+              border: 'none',
+              cursor: 'pointer',
             }}
           >
             Settings →
@@ -144,7 +168,7 @@ export function ChatScreen({ messages, isStreaming, onSend, onStop, onRetry, err
           }}
         >
           <span style={{ flex: 1 }}>{error}</span>
-          <button onClick={onRetry} style={{ color: '#ef4444', flexShrink: 0 }}>
+          <button onClick={onRetry} style={{ color: '#ef4444', flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', display: 'flex' }}>
             <RotateCcw size={14} />
           </button>
         </div>
@@ -164,7 +188,7 @@ export function ChatScreen({ messages, isStreaming, onSend, onStop, onRetry, err
           {QUICK_ACTIONS.map(({ label, prompt }) => (
             <button
               key={label}
-              onClick={() => onSend(prompt)}
+              onClick={() => handleQuickAction(prompt)}
               disabled={isStreaming}
               style={{
                 whiteSpace: 'nowrap',
@@ -179,6 +203,7 @@ export function ChatScreen({ messages, isStreaming, onSend, onStop, onRetry, err
                 flexShrink: 0,
                 WebkitTapHighlightColor: 'transparent',
                 opacity: isStreaming ? 0.4 : 1,
+                cursor: isStreaming ? 'not-allowed' : 'pointer',
               }}
             >
               {label}
@@ -242,18 +267,35 @@ export function ChatScreen({ messages, isStreaming, onSend, onStop, onRetry, err
             opacity: !isStreaming && !input.trim() ? 0.35 : 1,
             transition: 'opacity 0.15s, background 0.15s',
             WebkitTapHighlightColor: 'transparent',
+            cursor: !isStreaming && !input.trim() ? 'not-allowed' : 'pointer',
           }}
         >
           {isStreaming ? <Square size={18} /> : <Send size={18} />}
         </button>
       </div>
+
+      {/* Expand modal portal — rendered at root level */}
+      <style>{`
+        @keyframes blink {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0; }
+        }
+        @keyframes typingPulse {
+          0%, 80%, 100% { transform: scale(0.8); opacity: 0.4; }
+          40% { transform: scale(1); opacity: 1; }
+        }
+        @keyframes fadeInModal {
+          from { opacity: 0; transform: scale(0.96); }
+          to { opacity: 1; transform: scale(1); }
+        }
+      `}</style>
     </div>
   )
 }
 
 // ─── Empty chat state ─────────────────────────────────────────────────────────
 
-function EmptyChat({ onSend }: { onSend: (text: string) => void }) {
+function EmptyChat({ onQuickAction }: { onQuickAction: (prompt: string) => void }) {
   return (
     <div style={{
       display: 'flex',
@@ -288,7 +330,7 @@ function EmptyChat({ onSend }: { onSend: (text: string) => void }) {
         {QUICK_ACTIONS.map(({ label, prompt }) => (
           <button
             key={label}
-            onClick={() => onSend(prompt)}
+            onClick={() => onQuickAction(prompt)}
             style={{
               padding: '12px 10px',
               background: '#141416',
@@ -300,6 +342,7 @@ function EmptyChat({ onSend }: { onSend: (text: string) => void }) {
               gap: '4px',
               textAlign: 'left',
               WebkitTapHighlightColor: 'transparent',
+              cursor: 'pointer',
             }}
           >
             <span style={{ fontSize: '16px' }}>{label.split(' ')[0]}</span>
@@ -319,10 +362,12 @@ function MessageBubble({
   message,
   isLast,
   onRetry,
+  onApplyAction,
 }: {
   message: ChatMessage
   isLast: boolean
   onRetry: () => void
+  onApplyAction: (action: AIFileAction) => Promise<{ success: boolean; error?: string }>
 }) {
   const isUser = message.role === 'user'
   const displayText = stripActionBlocks(message.content)
@@ -364,7 +409,7 @@ function MessageBubble({
 
       {/* Artifact cards — file actions */}
       {message.actionResults && message.actionResults.length > 0 && (
-        <ArtifactCards results={message.actionResults} />
+        <ArtifactCards results={message.actionResults} onApplyAction={onApplyAction} />
       )}
 
       {/* Error + retry */}
@@ -385,6 +430,7 @@ function MessageBubble({
               fontSize: '11px',
               fontWeight: 600,
               whiteSpace: 'nowrap',
+              cursor: 'pointer',
             }}
           >
             <RotateCcw size={11} />
@@ -398,28 +444,206 @@ function MessageBubble({
 
 // ─── Artifact cards ───────────────────────────────────────────────────────────
 
-function ArtifactCards({ results }: { results: ActionExecutionResult[] }) {
+function ArtifactCards({
+  results,
+  onApplyAction,
+}: {
+  results: ActionExecutionResult[]
+  onApplyAction: (action: AIFileAction) => Promise<{ success: boolean; error?: string }>
+}) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '100%', maxWidth: '320px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%', maxWidth: '340px' }}>
       {results.map((result, i) => (
-        <ArtifactCard key={i} result={result} />
+        <ArtifactCard key={i} result={result} onApplyAction={onApplyAction} />
       ))}
     </div>
   )
 }
 
-function ArtifactCard({ result }: { result: ActionExecutionResult }) {
+// ─── File icon helper ─────────────────────────────────────────────────────────
+
+function getFileIcon(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase() ?? ''
+  if (ext === 'html') return '🌐'
+  if (ext === 'css') return '🎨'
+  if (ext === 'js') return '⚡'
+  if (ext === 'json') return '{}'
+  if (ext === 'md') return '📝'
+  if (ext === 'ts' || ext === 'tsx') return '🔷'
+  if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico'].includes(ext)) return '🖼'
+  return '📄'
+}
+
+// ─── Action badge meta ────────────────────────────────────────────────────────
+
+const ACTION_META: Record<string, { label: string; bg: string; color: string }> = {
+  create_file:   { label: 'CREATE', bg: '#052e16', color: '#22c55e' },
+  update_file:   { label: 'UPDATE', bg: '#0a1628', color: '#3b82f6' },
+  delete_file:   { label: 'DELETE', bg: '#1f0707', color: '#ef4444' },
+  create_folder: { label: 'FOLDER', bg: '#1c1002', color: '#f59e0b' },
+}
+
+// ─── Expand modal ─────────────────────────────────────────────────────────────
+
+function ExpandModal({
+  filename,
+  content,
+  onClose,
+}: {
+  filename: string
+  content: string
+  onClose: () => void
+}) {
   const [copied, setCopied] = useState(false)
 
-  const ACTION_META: Record<string, { label: string; bg: string; color: string }> = {
-    create_file: { label: 'CREATE', bg: '#052e16', color: '#22c55e' },
-    update_file: { label: 'UPDATE', bg: '#0a1628', color: '#3b82f6' },
-    delete_file: { label: 'DELETE', bg: '#1f0707', color: '#ef4444' },
-    create_folder: { label: 'FOLDER', bg: '#1c1002', color: '#f59e0b' },
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(content)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
   }
+
+  // Close on backdrop click
+  const handleBackdrop = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget) onClose()
+  }
+
+  // Close on Escape
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [onClose])
+
+  return (
+    <div
+      onClick={handleBackdrop}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.82)',
+        zIndex: 9999,
+        display: 'flex',
+        alignItems: 'flex-end',
+        justifyContent: 'center',
+        padding: '0',
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: '600px',
+          maxHeight: '90vh',
+          background: '#141416',
+          border: '1px solid #2a2a30',
+          borderRadius: '16px 16px 0 0',
+          display: 'flex',
+          flexDirection: 'column',
+          animation: 'fadeInModal 0.18s ease-out',
+          overflow: 'hidden',
+        }}
+      >
+        {/* Modal header */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '14px 16px',
+          borderBottom: '1px solid #2a2a30',
+          flexShrink: 0,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+            <span style={{ fontSize: '15px' }}>{getFileIcon(filename)}</span>
+            <span style={{
+              fontSize: '13px',
+              fontWeight: 600,
+              color: '#f0f0f2',
+              fontFamily: "'Geist Mono', 'JetBrains Mono', monospace",
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
+              {filename}
+            </span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+            <button
+              onClick={handleCopy}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                padding: '5px 10px',
+                background: '#1c1c1f',
+                border: '1px solid #2a2a30',
+                borderRadius: '6px',
+                color: copied ? '#22c55e' : '#8b8b96',
+                fontSize: '12px',
+                fontWeight: 500,
+                cursor: 'pointer',
+              }}
+            >
+              {copied ? <Check size={12} /> : <Copy size={12} />}
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+            <button
+              onClick={onClose}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '30px',
+                height: '30px',
+                background: '#1c1c1f',
+                border: '1px solid #2a2a30',
+                borderRadius: '8px',
+                color: '#8b8b96',
+                cursor: 'pointer',
+              }}
+            >
+              <X size={15} />
+            </button>
+          </div>
+        </div>
+
+        {/* Code content */}
+        <div style={{
+          flex: 1,
+          overflowY: 'auto',
+          padding: '14px 16px',
+          fontFamily: "'Geist Mono', 'JetBrains Mono', monospace",
+          fontSize: '12.5px',
+          lineHeight: 1.7,
+          color: '#c9c9d4',
+          background: '#0d0d0f',
+          whiteSpace: 'pre',
+          overflowX: 'auto',
+          WebkitOverflowScrolling: 'touch',
+        }}>
+          {content}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Single artifact card ─────────────────────────────────────────────────────
+
+function ArtifactCard({
+  result,
+  onApplyAction,
+}: {
+  result: ActionExecutionResult
+  onApplyAction: (action: AIFileAction) => Promise<{ success: boolean; error?: string }>
+}) {
+  const [copied, setCopied] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+  const [applying, setApplying] = useState(false)
+  const [applied, setApplied] = useState(false)
+  const [applyError, setApplyError] = useState<string | null>(null)
 
   const meta = ACTION_META[result.action.action] ?? { label: result.action.action.toUpperCase(), bg: '#1c1c1f', color: '#8b8b96' }
   const hasContent = result.success && result.action.content && result.action.action !== 'delete_file'
+  const filename = result.action.file || result.action.folder || ''
 
   const handleCopy = async () => {
     if (!result.action.content) return
@@ -428,102 +652,294 @@ function ArtifactCard({ result }: { result: ActionExecutionResult }) {
     setTimeout(() => setCopied(false), 2000)
   }
 
+  const handleApply = async () => {
+    if (applying || applied) return
+    setApplying(true)
+    setApplyError(null)
+    try {
+      const res = await onApplyAction(result.action)
+      if (res.success) {
+        setApplied(true)
+      } else {
+        setApplyError(res.error ?? 'Failed to apply action')
+      }
+    } catch (err) {
+      setApplyError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setApplying(false)
+    }
+  }
+
   // Preview: first 3 lines of content
   const preview = hasContent
     ? result.action.content!.split('\n').slice(0, 3).join('\n')
     : null
 
+  const isDeleteOrFolder = result.action.action === 'delete_file' || result.action.action === 'create_folder'
+
   return (
-    <div style={{
-      background: '#141416',
-      border: `1px solid ${result.success ? '#2a2a30' : '#ef44441a'}`,
-      borderRadius: '10px',
-      overflow: 'hidden',
-    }}>
-      {/* Card header */}
+    <>
       <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '8px 12px',
-        borderBottom: hasContent ? '1px solid #1f1f23' : 'none',
+        background: '#141416',
+        border: `1px solid ${result.success ? '#2a2a30' : 'rgba(239,68,68,0.25)'}`,
+        borderRadius: '10px',
+        overflow: 'hidden',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+        {/* Card header */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '9px 12px',
+          borderBottom: (preview) ? '1px solid #1f1f23' : 'none',
+          gap: '8px',
+        }}>
+          {/* Left: icon + filename */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '7px', minWidth: 0, flex: 1 }}>
+            <span style={{ fontSize: '14px', flexShrink: 0, lineHeight: 1 }}>
+              {getFileIcon(filename)}
+            </span>
+            <span style={{
+              fontSize: '12.5px',
+              color: '#e0e0e8',
+              fontFamily: "'Geist Mono', 'JetBrains Mono', monospace",
+              fontWeight: 500,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
+              {filename}
+            </span>
+          </div>
+
+          {/* Right: action badge */}
           <span style={{
-            fontSize: '10px',
+            fontSize: '9.5px',
             fontWeight: 700,
-            letterSpacing: '0.06em',
+            letterSpacing: '0.07em',
             padding: '2px 6px',
             borderRadius: '4px',
             background: result.success ? meta.bg : '#1f0707',
             color: result.success ? meta.color : '#ef4444',
             flexShrink: 0,
+            lineHeight: 1.6,
           }}>
             {result.success ? meta.label : '✗ FAILED'}
           </span>
-          <span style={{
-            fontSize: '13px',
-            color: '#f0f0f2',
-            fontFamily: 'monospace',
-            fontWeight: 500,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}>
-            {result.action.file}
-          </span>
         </div>
 
-        {hasContent && (
-          <button
-            onClick={handleCopy}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              padding: '4px 8px',
-              background: '#1c1c1f',
-              border: '1px solid #2a2a30',
-              borderRadius: '6px',
-              color: copied ? '#22c55e' : '#8b8b96',
-              fontSize: '11px',
-              fontWeight: 500,
-              flexShrink: 0,
-              height: '28px',
-            }}
-          >
-            {copied ? <Check size={11} /> : <Copy size={11} />}
-            {copied ? 'Copied' : 'Copy'}
-          </button>
+        {/* Code preview with fade */}
+        {preview && (
+          <div style={{ position: 'relative', height: '62px', overflow: 'hidden', background: '#0d0d0f' }}>
+            <div style={{
+              padding: '8px 12px',
+              fontFamily: "'Geist Mono', 'JetBrains Mono', monospace",
+              fontSize: '11.5px',
+              color: '#6d6d7a',
+              lineHeight: 1.65,
+              whiteSpace: 'pre',
+              overflow: 'hidden',
+            }}>
+              {preview}
+            </div>
+            {/* Fade overlay */}
+            <div style={{
+              position: 'absolute',
+              bottom: 0,
+              left: 0,
+              right: 0,
+              height: '40px',
+              background: 'linear-gradient(to bottom, transparent, #0d0d0f)',
+              pointerEvents: 'none',
+            }} />
+          </div>
+        )}
+
+        {/* Failed error */}
+        {!result.success && result.error && (
+          <div style={{ padding: '6px 12px', fontSize: '11.5px', color: '#ef4444', background: '#0d0d0f' }}>
+            {result.error}
+          </div>
+        )}
+
+        {/* Action buttons footer */}
+        {result.success && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            padding: '8px 10px',
+            borderTop: preview ? '1px solid #1f1f23' : (isDeleteOrFolder ? '1px solid #1f1f23' : 'none'),
+            background: '#141416',
+          }}>
+            {/* Copy button */}
+            {hasContent && (
+              <button
+                onClick={handleCopy}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  padding: '4px 9px',
+                  height: '28px',
+                  background: '#1c1c1f',
+                  border: '1px solid #2a2a30',
+                  borderRadius: '6px',
+                  color: copied ? '#22c55e' : '#8b8b96',
+                  fontSize: '11px',
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                  transition: 'color 0.15s',
+                  flexShrink: 0,
+                }}
+              >
+                {copied ? <Check size={11} /> : <Copy size={11} />}
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+            )}
+
+            {/* Expand button */}
+            {hasContent && (
+              <button
+                onClick={() => setExpanded(true)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  padding: '4px 9px',
+                  height: '28px',
+                  background: '#1c1c1f',
+                  border: '1px solid #2a2a30',
+                  borderRadius: '6px',
+                  color: '#8b8b96',
+                  fontSize: '11px',
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                  flexShrink: 0,
+                }}
+              >
+                <Maximize2 size={11} />
+                Expand
+              </button>
+            )}
+
+            {/* Spacer */}
+            <div style={{ flex: 1 }} />
+
+            {/* Apply to File button */}
+            {!isDeleteOrFolder && (
+              <button
+                onClick={handleApply}
+                disabled={applying || applied}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  padding: '4px 11px',
+                  height: '28px',
+                  background: applied ? '#052e16' : applying ? '#2d1a4a' : '#7c3aed',
+                  border: `1px solid ${applied ? '#22c55e40' : applying ? '#a855f740' : '#9333ea'}`,
+                  borderRadius: '6px',
+                  color: applied ? '#22c55e' : applying ? '#c084fc' : 'white',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  cursor: applying || applied ? 'not-allowed' : 'pointer',
+                  flexShrink: 0,
+                  transition: 'all 0.2s',
+                  opacity: applying ? 0.85 : 1,
+                }}
+              >
+                {applying ? (
+                  <>
+                    <Loader2 size={11} style={{ animation: 'spin 0.8s linear infinite' }} />
+                    Applying…
+                  </>
+                ) : applied ? (
+                  <>
+                    <Check size={11} />
+                    Applied
+                  </>
+                ) : (
+                  <>
+                    Apply to File ▶
+                  </>
+                )}
+              </button>
+            )}
+
+            {/* Delete action apply button */}
+            {result.action.action === 'delete_file' && (
+              <button
+                onClick={handleApply}
+                disabled={applying || applied}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  padding: '4px 11px',
+                  height: '28px',
+                  background: applied ? '#052e16' : applying ? '#2d1a4a' : '#7c1a1a',
+                  border: `1px solid ${applied ? '#22c55e40' : '#ef444440'}`,
+                  borderRadius: '6px',
+                  color: applied ? '#22c55e' : applying ? '#fca5a5' : '#fca5a5',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  cursor: applying || applied ? 'not-allowed' : 'pointer',
+                  flexShrink: 0,
+                  transition: 'all 0.2s',
+                }}
+              >
+                {applying ? (
+                  <>
+                    <Loader2 size={11} style={{ animation: 'spin 0.8s linear infinite' }} />
+                    Deleting…
+                  </>
+                ) : applied ? (
+                  <>
+                    <Check size={11} />
+                    Deleted
+                  </>
+                ) : (
+                  <>
+                    Delete File ▶
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Apply error */}
+        {applyError && (
+          <div style={{
+            padding: '5px 12px 8px',
+            fontSize: '11px',
+            color: '#ef4444',
+            background: '#141416',
+            borderTop: '1px solid #1f1f23',
+          }}>
+            ⚠ {applyError}
+          </div>
         )}
       </div>
 
-      {/* Code preview */}
-      {preview && (
-        <div style={{
-          padding: '8px 12px',
-          fontFamily: "'Geist Mono', 'JetBrains Mono', monospace",
-          fontSize: '12px',
-          color: '#6d6d7a',
-          lineHeight: 1.6,
-          background: '#0d0d0f',
-          WebkitMaskImage: 'linear-gradient(to bottom, black 40%, transparent 100%)',
-          maskImage: 'linear-gradient(to bottom, black 40%, transparent 100%)',
-          maxHeight: '64px',
-          overflow: 'hidden',
-          whiteSpace: 'pre',
-        }}>
-          {preview}
-        </div>
+      {/* Expand modal */}
+      {expanded && hasContent && (
+        <ExpandModal
+          filename={filename}
+          content={result.action.content!}
+          onClose={() => setExpanded(false)}
+        />
       )}
 
-      {/* Error message */}
-      {!result.success && result.error && (
-        <div style={{ padding: '6px 12px', fontSize: '12px', color: '#ef4444', background: '#0d0d0f' }}>
-          {result.error}
-        </div>
-      )}
-    </div>
+      {/* Spin keyframe (inline for loader) */}
+      <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
+    </>
   )
 }
 

@@ -6,10 +6,10 @@
  * 2. Inline CSS files referenced via <link href="...">
  * 3. Inline JS files referenced via <script src="...">
  * 4. Auto-inject any unreferenced CSS/JS files that exist in the project
- * 5. Replace asset filename references with base64 data URLs
+ * 5. Replace asset filename references with base64 data URLs or blob object URLs
  */
 
-import type { ProjectFile } from '../types'
+import type { ProjectFile, ProjectAsset } from '../types'
 
 export interface PreviewBuildResult {
   html: string
@@ -27,7 +27,15 @@ export function revokePreviewObjectUrls(): void {
   previousObjectUrls = []
 }
 
-export function buildPreviewDocument(files: ProjectFile[]): PreviewBuildResult {
+/** Map of asset filename → object URL. Populated by caller. */
+let _assetObjectUrls: Record<string, string> = {}
+
+/** Update the asset URL map so the preview engine can resolve imported blobs. */
+export function setAssetObjectUrls(urls: Record<string, string>): void {
+  _assetObjectUrls = urls
+}
+
+export function buildPreviewDocument(files: ProjectFile[], assets?: ProjectAsset[]): PreviewBuildResult {
   // Revoke any object URLs from the previous build
   revokePreviewObjectUrls()
 
@@ -50,7 +58,7 @@ export function buildPreviewDocument(files: ProjectFile[]): PreviewBuildResult {
   const referencedCss = new Set<string>()
   for (const css of cssFiles) {
     const linkRegex = new RegExp(
-      `<link[^>]*href=["']${escapeRegex(css.name)}["'][^>]*/?>`,
+      `<link[^>]*href=["']${escapeRegex(css.name)}["'][^>]*/?>`  ,
       'gi'
     )
     if (linkRegex.test(html)) {
@@ -101,14 +109,29 @@ export function buildPreviewDocument(files: ProjectFile[]): PreviewBuildResult {
     }
   }
 
-  // ── 5. Replace asset filename refs with data URLs ────────────────────────
-  // (Assets stored as base64 content strings)
+  // ── 5. Replace asset filename refs with data URLs / object URLs ──────────
+  // 5a. Text-stored assets (base64 data URL in content field)
   const assetFiles = files.filter((f) => f.type === 'asset' && f.content)
   for (const asset of assetFiles) {
     const nameRegex = new RegExp(escapeRegex(asset.name), 'g')
     if (nameRegex.test(html)) {
       // content is expected to be a base64 data URL: "data:image/png;base64,..."
       html = html.replace(nameRegex, asset.content)
+    }
+  }
+
+  // 5b. Blob-based imported assets — create/reuse object URLs
+  const blobAssets = assets ?? []
+  for (const asset of blobAssets) {
+    const nameRegex = new RegExp(escapeRegex(asset.fileName), 'g')
+    if (nameRegex.test(html)) {
+      let objUrl = _assetObjectUrls[asset.fileName]
+      if (!objUrl) {
+        objUrl = URL.createObjectURL(asset.blob)
+        _assetObjectUrls[asset.fileName] = objUrl
+        previousObjectUrls.push(objUrl)
+      }
+      html = html.replace(nameRegex, objUrl)
     }
   }
 

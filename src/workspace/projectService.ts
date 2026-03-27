@@ -197,6 +197,29 @@ export async function getProjectAssets(projectId: string): Promise<ProjectAsset[
   return idb.getAssetsForProject<ProjectAsset>(projectId)
 }
 
+export async function createAsset(
+  projectId: string,
+  fileName: string,
+  mimeType: string,
+  blob: Blob
+): Promise<ProjectAsset> {
+  const asset: ProjectAsset = {
+    id: uuid(),
+    projectId,
+    fileName,
+    mimeType,
+    blob,
+    size: blob.size,
+    createdAt: new Date().toISOString(),
+  }
+  await idb.putAsset(asset)
+  return asset
+}
+
+export async function deleteAsset(assetId: string): Promise<void> {
+  await idb.deleteAsset(assetId)
+}
+
 // ─── Hydration helper ─────────────────────────────────────────────────────────
 
 export interface LoadedProject {

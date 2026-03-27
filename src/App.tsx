@@ -6,9 +6,10 @@ import { FilesScreen } from './ui/FilesScreen'
 import { PreviewScreen } from './ui/PreviewScreen'
 import { SettingsScreen } from './ui/SettingsScreen'
 import { ModelSelector } from './ui/ModelSelector'
+import { ImportModal, type ImportResult } from './ui/ImportModal'
 import type {
-  TabId, Project, ProjectFile, ProjectFolder, ChatMessage,
-  AIProvider, FileSystemUIState,
+  TabId, Project, ProjectFile, ProjectFolder, ProjectAsset, ChatMessage,
+  AIProvider, FileSystemUIState, AIFileAction,
 } from './types'
 import * as projectService from './workspace/projectService'
 import * as ls from './storage/ls'
@@ -25,6 +26,8 @@ export default function App() {
   const [project, setProject] = useState<Project | null>(null)
   const [files, setFiles] = useState<ProjectFile[]>([])
   const [folders, setFolders] = useState<ProjectFolder[]>([])
+  const [assets, setAssets] = useState<ProjectAsset[]>([])
+  const [showImportModal, setShowImportModal] = useState(false)
 
   // File system UI state — lifted here so it survives tab switches
   const [fsUiState, setFsUiState] = useState<FileSystemUIState>({
@@ -60,6 +63,7 @@ export default function App() {
             setProject(loaded.project)
             setFiles(loaded.files)
             setFolders(loaded.folders)
+            setAssets(loaded.assets)
             // Open editor if there's a valid active file
             if (loaded.project.activeFileId) {
               setFsUiState((prev) => ({ ...prev, view: 'editor' }))
@@ -74,6 +78,7 @@ export default function App() {
         setProject(p)
         setFiles([])
         setFolders([])
+        setAssets([])
       } catch (err) {
         console.error('Failed to initialize workspace:', err)
         // Create fresh project as fallback
@@ -91,12 +96,14 @@ export default function App() {
   // ── Reload files from IDB ────────────────────────────────────────────────
 
   const reloadFiles = useCallback(async (projectId: string) => {
-    const [f, fo] = await Promise.all([
+    const [f, fo, a] = await Promise.all([
       projectService.getProjectFiles(projectId),
       projectService.getProjectFolders(projectId),
+      projectService.getProjectAssets(projectId),
     ])
     setFiles(f)
     setFolders(fo)
+    setAssets(a)
     setRefreshTrigger((n) => n + 1)
   }, [])
 
@@ -124,7 +131,6 @@ export default function App() {
       setRefreshTrigger((n) => n + 1)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
-      // Propagate error to FilesScreen via a chat message isn't ideal; use alert for now
       alert(msg)
     }
   }, [project])
@@ -192,6 +198,55 @@ export default function App() {
       }
     }, FILE_SAVE_DEBOUNCE_MS)
   }, [files])
+
+  // ── Import handler ────────────────────────────────────────────────────────
+
+  const handleImport = useCallback(async (results: ImportResult[]) => {
+    if (!project) return
+
+    for (const result of results) {
+      if (result.kind === 'text') {
+        // Check if file already exists → upsert
+        await projectService.upsertFileByName(project.id, result.name, result.content)
+      } else if (result.kind === 'asset') {
+        // Check if asset with same name already exists → replace
+        const existingAssets = await projectService.getProjectAssets(project.id)
+        const existing = existingAssets.find((a) => a.fileName === result.name)
+        if (existing) {
+          await projectService.deleteAsset(existing.id)
+        }
+        await projectService.createAsset(project.id, result.name, result.mimeType, result.blob)
+      }
+    }
+
+    await reloadFiles(project.id)
+    setActiveTab('files')
+  }, [project, reloadFiles])
+
+  // ── Apply action from chat artifact ──────────────────────────────────────
+
+  const handleApplyAction = useCallback(async (
+    action: AIFileAction
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (!project) return { success: false, error: 'No project loaded' }
+
+    try {
+      const results = await executeActions(project.id, [action])
+      const result = results[0]
+      if (!result) return { success: false, error: 'No result returned' }
+
+      if (result.success) {
+        await reloadFiles(project.id)
+        setRefreshTrigger((n) => n + 1)
+        return { success: true }
+      } else {
+        return { success: false, error: result.error }
+      }
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err)
+      return { success: false, error }
+    }
+  }, [project, reloadFiles])
 
   // ── Chat / AI ────────────────────────────────────────────────────────────
 
@@ -264,7 +319,7 @@ export default function App() {
         signal: abortRef.current.signal,
       })
 
-      // Execute file actions
+      // Execute file actions automatically
       let actionResults = undefined
       let finalContent = result.displayText || result.rawText
 
@@ -357,6 +412,7 @@ export default function App() {
     setProject(p)
     setFiles([])
     setFolders([])
+    setAssets([])
     setMessages([])
     setFsUiState({ view: 'tree', expandedFolderIds: [], isCreatingFile: false })
     setRefreshTrigger((n) => n + 1)
@@ -424,6 +480,8 @@ export default function App() {
             error={chatError}
             hasApiKey={!!aiSettings.apiKeys[activeProvider]}
             onGoToSettings={() => setActiveTab('settings')}
+            onApplyAction={handleApplyAction}
+            onOpenImport={() => setShowImportModal(true)}
           />
         </div>
 
@@ -431,6 +489,7 @@ export default function App() {
           <FilesScreen
             files={files}
             folders={folders}
+            assets={assets}
             activeFileId={project?.activeFileId ?? null}
             uiState={fsUiState}
             onUiStateChange={setFsUiState}
@@ -438,12 +497,14 @@ export default function App() {
             onCreateFile={handleCreateFile}
             onDeleteFile={handleDeleteFile}
             onUpdateContent={handleUpdateContent}
+            onOpenImport={() => setShowImportModal(true)}
           />
         </div>
 
         <div style={{ display: activeTab === 'preview' ? 'flex' : 'none', height: '100%', flexDirection: 'column' }}>
           <PreviewScreen
             files={files}
+            assets={assets}
             refreshTrigger={refreshTrigger}
           />
         </div>
@@ -469,6 +530,13 @@ export default function App() {
           activeModel={activeModel}
           onSelect={handleModelSelect}
           onClose={() => setShowModelSelector(false)}
+        />
+      )}
+
+      {showImportModal && (
+        <ImportModal
+          onClose={() => setShowImportModal(false)}
+          onImport={handleImport}
         />
       )}
     </>

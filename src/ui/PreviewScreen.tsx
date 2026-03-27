@@ -1,16 +1,17 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
 import { RefreshCw, Maximize2, X, AlertTriangle } from 'lucide-react'
-import type { ProjectFile } from '../types'
+import type { ProjectFile, ProjectAsset } from '../types'
 import { buildPreviewDocument, revokePreviewObjectUrls } from '../preview/buildPreview'
 
 interface PreviewScreenProps {
   files: ProjectFile[]
+  assets: ProjectAsset[]
   refreshTrigger: number
 }
 
 const DEBOUNCE_MS = 300
 
-export function PreviewScreen({ files, refreshTrigger }: PreviewScreenProps) {
+export function PreviewScreen({ files, assets, refreshTrigger }: PreviewScreenProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [fullscreen, setFullscreen] = useState(false)
   const [srcdocCache, setSrcdocCache] = useState('')
@@ -24,7 +25,7 @@ export function PreviewScreen({ files, refreshTrigger }: PreviewScreenProps) {
     setIsUpdating(true)
     setJsErrors([])
 
-    const { html, hasHtml: found } = buildPreviewDocument(currentFiles)
+    const { html, hasHtml: found } = buildPreviewDocument(currentFiles, assets)
     setHasHtml(found)
 
     const srcdoc = found
