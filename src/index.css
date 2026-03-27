@@ -1,0 +1,181 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Geist+Mono:wght@100..900&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap');
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Blink UI Theme CSS
+   REQUIRED for @blinkdotnew/ui components to render correctly.
+   BlinkUIProvider adds .theme-{name} + .dark/.light to <html>,
+   activating the matching CSS variable set below.
+   ───────────────────────────────────────────────────────────────────────────── */
+@import '@blinkdotnew/ui/styles';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans), 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+    letter-spacing: var(--tracking-normal);
+  }
+}
+
+/* ── App palette (unlayered, after utilities) ─────────────────────────────────
+   Overrides @blinkdotnew/ui theme colors. @layer base loses specificity to UI themes.
+   Dark mode uses :root.dark + .theme-*.dark to match BlinkUIProvider.
+   ⚠️ AGENT MUST REPLACE placeholder values with a custom palette.
+   ──────────────────────────────────────────────────────────────────────────── */
+:root {
+  /* ⚠️ AGENT MUST REPLACE: These are placeholder colors. You MUST define a custom palette before writing components. */
+  /* The template uses distinctive placeholder colors to force customization - do NOT use these in production! */
+
+  /*
+   * EXAMPLE PALETTES (use as inspiration, replace with your own):
+   *
+   * Modern SaaS (Business/Enterprise):
+   * --primary: 220 10% 20%;        (Charcoal #2D3748)
+   * --accent: 220 10% 30%;         (Lighter charcoal #4A5568)
+   *
+   * Bold Tech (Startups/Developer Tools):
+   * --primary: 348 83% 47%;        (Crimson #DA1E37)
+   * --accent: 348 83% 57%;         (Lighter crimson #F0213E)
+   *
+   * Quantum Rose (Creative/Design):
+   * --primary: 330 81% 50%;        (Pink #E6067A)
+   * --accent: 330 81% 70%;         (Lighter pink #F472B6)
+   *
+   * Rich Forest (Calm/Professional):
+   * --primary: 151 55% 25%;        (Pine #1C6340)
+   * --accent: 151 55% 35%;         (Lighter pine #288C5A)
+   *
+   * Sunset Warmth (Friendly/Welcoming):
+   * --primary: 24 95% 53%;         (Orange #F97316)
+   * --accent: 24 95% 63%;          (Lighter orange #FB923C)
+   */
+
+  /* Expectation Clarifier — Violet + Amber palette */
+  --background: 240 20% 98%;
+  --foreground: 258 30% 18%;
+  --card: 0 0% 100%;
+  --card-foreground: 258 30% 18%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 258 30% 18%;
+  --primary: 258 89% 60%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 258 40% 96%;
+  --secondary-foreground: 258 30% 35%;
+  --muted: 258 20% 95%;
+  --muted-foreground: 258 15% 52%;
+  --accent: 38 92% 58%;
+  --accent-foreground: 38 60% 15%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 258 20% 90%;
+  --input: 258 20% 90%;
+  --ring: 258 89% 60%;
+
+  /* Charts */
+  --chart-1: 258 89% 60%;
+  --chart-2: 38 92% 58%;
+  --chart-3: 168 60% 42%;
+  --chart-4: 0 84% 60%;
+  --chart-5: 210 70% 55%;
+
+  /* Sidebar */
+  --sidebar: 258 40% 96%;
+  --sidebar-foreground: 258 30% 18%;
+  --sidebar-primary: 258 89% 60%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 38 92% 58%;
+  --sidebar-accent-foreground: 38 60% 15%;
+  --sidebar-border: 258 20% 90%;
+  --sidebar-ring: 258 89% 60%;
+
+  /* Fonts */
+  --font-sans: DM Sans, sans-serif;
+  --font-serif: Lora, serif;
+  --font-mono: IBM Plex Mono, monospace;
+
+  /* Shadows */
+  --shadow-2xs: 0px 4px 8px -1px hsl(0 0% 0% / 0.05);
+  --shadow-xs: 0px 4px 8px -1px hsl(0 0% 0% / 0.05);
+  --shadow-sm: 0px 4px 8px -1px hsl(0 0% 0% / 0.10), 0px 1px 2px -2px hsl(0 0% 0% / 0.10);
+  --shadow: 0px 4px 8px -1px hsl(0 0% 0% / 0.10), 0px 1px 2px -2px hsl(0 0% 0% / 0.10);
+  --shadow-md: 0px 4px 8px -1px hsl(0 0% 0% / 0.10), 0px 2px 4px -2px hsl(0 0% 0% / 0.10);
+  --shadow-lg: 0px 4px 8px -1px hsl(0 0% 0% / 0.10), 0px 4px 6px -2px hsl(0 0% 0% / 0.10);
+  --shadow-xl: 0px 4px 8px -1px hsl(0 0% 0% / 0.10), 0px 8px 10px -2px hsl(0 0% 0% / 0.10);
+  --shadow-2xl: 0px 4px 8px -1px hsl(0 0% 0% / 0.25);
+
+  /* Misc */
+  --tracking-normal: 0em;
+  --spacing: 0.25rem;
+  --radius: 0.5rem;
+}
+
+:root.dark,
+.theme-linear.dark,
+.theme-glass.dark,
+.theme-midnight.dark,
+.theme-minimal.dark {
+  /* ⚠️ AGENT MUST REPLACE: Dark mode colors - replace with your custom dark palette */
+  --background: 222.2222 47.3684% 11.1765%;
+  --foreground: 216 12.1951% 83.9216%;
+  --card: 217.2414 32.5843% 17.451%;
+  --card-foreground: 216 12.1951% 83.9216%;
+  --popover: 217.2414 32.5843% 17.451%;
+  --popover-foreground: 216 12.1951% 83.9216%;
+  --background: 240 15% 10%;
+  --foreground: 258 15% 88%;
+  --card: 258 20% 14%;
+  --card-foreground: 258 15% 88%;
+  --popover: 258 20% 14%;
+  --popover-foreground: 258 15% 88%;
+  --primary: 258 89% 72%;
+  --primary-foreground: 240 15% 10%;
+  --secondary: 258 20% 20%;
+  --secondary-foreground: 258 15% 70%;
+  --muted: 258 20% 16%;
+  --muted-foreground: 258 10% 50%;
+  --accent: 38 92% 65%;
+  --accent-foreground: 38 60% 10%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 258 15% 24%;
+  --input: 258 15% 24%;
+  --ring: 258 89% 72%;
+
+  --chart-1: 258 89% 72%;
+  --chart-2: 38 92% 65%;
+  --chart-3: 168 60% 55%;
+  --chart-4: 0 84% 65%;
+  --chart-5: 210 70% 65%;
+
+  --sidebar: 258 20% 14%;
+  --sidebar-foreground: 258 15% 88%;
+  --sidebar-primary: 258 89% 72%;
+  --sidebar-primary-foreground: 240 15% 10%;
+  --sidebar-accent: 38 92% 65%;
+  --sidebar-accent-foreground: 38 60% 10%;
+  --sidebar-border: 258 15% 24%;
+  --sidebar-ring: 258 89% 72%;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
