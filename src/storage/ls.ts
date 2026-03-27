@@ -7,6 +7,7 @@
  *   app:model               — active model name
  *   app:apiKey:{provider}   — API key per provider
  *   app:customInstruction   — system instruction text
+ *   app:customProvider      — CustomProviderConfig JSON
  *   app:projectIndex        — [{id, name, updatedAt}]
  *   app:lastProjectId       — last opened project ID
  *   app:theme               — 'dark' | 'light'
@@ -15,17 +16,18 @@
  * NEVER store file content, blobs, or large data here.
  */
 
-import type { AIProvider, ProjectIndexItem, AppPreferences } from '../types'
+import type { AIProvider, ProjectIndexItem, AppPreferences, CustomProviderConfig } from '../types'
 
 const KEYS = {
   PROVIDER: 'app:provider',
   MODEL: 'app:model',
   CUSTOM_INSTRUCTION: 'app:customInstruction',
+  CUSTOM_PROVIDER: 'app:customProvider',
   PROJECT_INDEX: 'app:projectIndex',
   LAST_PROJECT_ID: 'app:lastProjectId',
   THEME: 'app:theme',
   PREFERENCES: 'app:preferences',
-  apiKey: (p: AIProvider) => `app:apiKey:${p}` as const,
+  apiKey: (p: string) => `app:apiKey:${p}` as const,
 } as const
 
 // ─── Generic helpers ─────────────────────────────────────────────────────────
@@ -50,6 +52,13 @@ function removeItem(key: string): void {
 
 // ─── Provider & Model ────────────────────────────────────────────────────────
 
+const DEFAULT_MODELS: Record<string, string> = {
+  gemini: 'gemini-2.5-flash',
+  claude: 'claude-sonnet-4-6',
+  openai: 'gpt-5.4-mini',
+  custom: '',
+}
+
 export function getActiveProvider(): AIProvider {
   return getItem<AIProvider>(KEYS.PROVIDER, 'gemini')
 }
@@ -59,24 +68,42 @@ export function setActiveProvider(provider: AIProvider): void {
 }
 
 export function getActiveModel(): string {
-  const defaults: Record<AIProvider, string> = {
-    gemini: 'gemini-2.0-flash',
-    claude: 'claude-3-5-haiku-20241022',
-    openai: 'gpt-4o-mini',
+  const provider = getActiveProvider()
+  // If custom, the model comes from the custom config
+  if (provider === 'custom') {
+    return getCustomProviderConfig().model
   }
-  return getItem<string>(KEYS.MODEL, defaults[getActiveProvider()])
+  return getItem<string>(KEYS.MODEL, DEFAULT_MODELS[provider] ?? '')
 }
 
 export function setActiveModel(model: string): void {
   setItem(KEYS.MODEL, model)
 }
 
-export function getApiKey(provider: AIProvider): string {
+export function getApiKey(provider: string): string {
   return getItem<string>(KEYS.apiKey(provider), '')
 }
 
-export function setApiKey(provider: AIProvider, key: string): void {
+export function setApiKey(provider: string, key: string): void {
   setItem(KEYS.apiKey(provider), key)
+}
+
+// ─── Custom Provider Config ───────────────────────────────────────────────────
+
+const DEFAULT_CUSTOM_CONFIG: CustomProviderConfig = {
+  label: 'Custom',
+  endpoint: 'https://api.openai.com/v1',
+  model: '',
+  apiKey: '',
+  extraHeaders: '',
+}
+
+export function getCustomProviderConfig(): CustomProviderConfig {
+  return getItem<CustomProviderConfig>(KEYS.CUSTOM_PROVIDER, DEFAULT_CUSTOM_CONFIG)
+}
+
+export function setCustomProviderConfig(config: CustomProviderConfig): void {
+  setItem(KEYS.CUSTOM_PROVIDER, config)
 }
 
 // ─── Custom Instruction ───────────────────────────────────────────────────────
@@ -158,8 +185,9 @@ export function getPreferences(): AppPreferences {
 export interface AISettingsSnapshot {
   activeProvider: AIProvider
   activeModel: string
-  apiKeys: Record<AIProvider, string>
+  apiKeys: Record<string, string>
   customInstruction: string
+  customProvider: CustomProviderConfig
 }
 
 export function getAISettings(): AISettingsSnapshot {
@@ -173,6 +201,7 @@ export function getAISettings(): AISettingsSnapshot {
       openai: getApiKey('openai'),
     },
     customInstruction: getCustomInstruction(),
+    customProvider: getCustomProviderConfig(),
   }
 }
 

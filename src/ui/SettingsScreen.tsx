@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { Eye, EyeOff, AlertTriangle, ChevronRight } from 'lucide-react'
-import type { AIProvider } from '../types'
+import { Eye, EyeOff, AlertTriangle, ChevronRight, Zap } from 'lucide-react'
+import type { AIProvider, CustomProviderConfig } from '../types'
 import type { AISettingsSnapshot } from '../storage/ls'
+import { PROVIDER_MODELS, API_KEY_LINKS } from '../ai/providers'
 
 interface SettingsScreenProps {
   settings: AISettingsSnapshot
@@ -11,53 +12,42 @@ interface SettingsScreenProps {
   onUpdateModel: (provider: AIProvider, model: string) => void
   onUpdateApiKey: (provider: AIProvider, key: string) => void
   onUpdateSystemInstruction: (text: string) => void
+  onUpdateCustomProvider: (config: CustomProviderConfig) => void
   onDeleteProject: () => void
   onResetAll: () => void
 }
 
-const PROVIDERS: { id: AIProvider; label: string; color: string }[] = [
+const PROVIDER_TABS: { id: AIProvider; label: string; color: string }[] = [
   { id: 'gemini', label: 'Gemini', color: '#4285f4' },
   { id: 'claude', label: 'Claude', color: '#d97706' },
   { id: 'openai', label: 'OpenAI', color: '#22c55e' },
+  { id: 'custom', label: 'Custom', color: '#8b5cf6' },
 ]
-
-const MODELS: Record<AIProvider, { value: string; label: string }[]> = {
-  gemini: [
-    { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (fast)' },
-    { value: 'gemini-2.5-pro-preview-03-25', label: 'Gemini 2.5 Pro (best)' },
-    { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash' },
-  ],
-  claude: [
-    { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku (fast)' },
-    { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet' },
-    { value: 'claude-opus-4-5', label: 'Claude Opus (best)' },
-  ],
-  openai: [
-    { value: 'gpt-4o-mini', label: 'GPT-4o Mini (fast)' },
-    { value: 'gpt-4o', label: 'GPT-4o' },
-    { value: 'gpt-4.1', label: 'GPT-4.1 (best)' },
-  ],
-}
-
-const API_KEY_LINKS: Record<AIProvider, string> = {
-  gemini: 'https://aistudio.google.com/app/apikey',
-  claude: 'https://console.anthropic.com/settings/keys',
-  openai: 'https://platform.openai.com/api-keys',
-}
 
 export function SettingsScreen({
   settings, projectName, fileCount,
   onUpdateProvider, onUpdateModel, onUpdateApiKey,
-  onUpdateSystemInstruction, onDeleteProject, onResetAll,
+  onUpdateSystemInstruction, onUpdateCustomProvider, onDeleteProject, onResetAll,
 }: SettingsScreenProps) {
-  const [showApiKey, setShowApiKey] = useState<Record<AIProvider, boolean>>({
-    gemini: false, claude: false, openai: false,
-  })
+  const [showApiKey, setShowApiKey] = useState(false)
+  const [showCustomApiKey, setShowCustomApiKey] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
 
+  // Local draft for custom provider (saves on blur/change)
+  const [customDraft, setCustomDraft] = useState<CustomProviderConfig>(settings.customProvider)
+
   const activeProvider = settings.activeProvider
-  const currentApiKey = settings.apiKeys[activeProvider]
+  const isCustom = activeProvider === 'custom'
+
+  const builtinGroup = PROVIDER_MODELS.find((g) => g.provider === activeProvider)
+  const currentApiKey = isCustom ? settings.customProvider.apiKey : (settings.apiKeys[activeProvider] ?? '')
+
+  const handleCustomChange = (field: keyof CustomProviderConfig, value: string) => {
+    const updated = { ...customDraft, [field]: value }
+    setCustomDraft(updated)
+    onUpdateCustomProvider(updated)
+  }
 
   return (
     <div style={{ height: '100%', overflowY: 'auto', padding: '0 0 32px' }}>
@@ -65,14 +55,20 @@ export function SettingsScreen({
       {/* Provider & Model section */}
       <SectionHeader>Provider & Model</SectionHeader>
       <div style={{ padding: '0 16px 16px' }}>
-        {/* Provider pills */}
-        <div style={{ display: 'flex', background: '#1c1c1f', borderRadius: '10px', padding: '3px', gap: '2px', marginBottom: '16px' }}>
-          {PROVIDERS.map((p) => (
+
+        {/* Provider tabs — scrollable on narrow screen */}
+        <div style={{
+          display: 'flex', background: '#1c1c1f', borderRadius: '10px',
+          padding: '3px', gap: '2px', marginBottom: '16px', overflowX: 'auto',
+          scrollbarWidth: 'none',
+        }}>
+          {PROVIDER_TABS.map((p) => (
             <button
               key={p.id}
               onClick={() => onUpdateProvider(p.id)}
               style={{
-                flex: 1,
+                flex: '1 0 auto',
+                minWidth: '60px',
                 height: '38px',
                 borderRadius: '8px',
                 fontSize: '13px',
@@ -81,10 +77,8 @@ export function SettingsScreen({
                 color: activeProvider === p.id ? '#f0f0f2' : '#6d6d7a',
                 transition: 'all 0.15s',
                 WebkitTapHighlightColor: 'transparent',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '5px',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px',
+                whiteSpace: 'nowrap',
               }}
             >
               {activeProvider === p.id && (
@@ -95,67 +89,179 @@ export function SettingsScreen({
           ))}
         </div>
 
-        {/* Model */}
-        <FieldLabel>Model</FieldLabel>
-        <select
-          value={settings.activeModel}
-          onChange={(e) => onUpdateModel(activeProvider, e.target.value)}
-          style={{ ...inputStyle, marginBottom: '16px', cursor: 'pointer' }}
-        >
-          {MODELS[activeProvider].map((m) => (
-            <option key={m.value} value={m.value}>{m.label}</option>
-          ))}
-        </select>
+        {/* ── Built-in providers ─────────────────────────────────────────── */}
+        {!isCustom && builtinGroup && (
+          <>
+            {/* Model dropdown */}
+            <FieldLabel>Model</FieldLabel>
+            <select
+              value={settings.activeModel}
+              onChange={(e) => onUpdateModel(activeProvider, e.target.value)}
+              style={{ ...inputStyle, marginBottom: '16px', cursor: 'pointer' }}
+            >
+              {builtinGroup.models.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}{m.description ? ` — ${m.description}` : ''}
+                </option>
+              ))}
+            </select>
 
-        {/* API Key */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-          <FieldLabel style={{ margin: 0 }}>
-            API Key — {PROVIDERS.find((p) => p.id === activeProvider)?.label}
-          </FieldLabel>
-          <a
-            href={API_KEY_LINKS[activeProvider]}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ fontSize: '11px', color: '#a855f7', display: 'flex', alignItems: 'center', gap: '2px' }}
-          >
-            Get key <ChevronRight size={11} />
-          </a>
-        </div>
-        <div style={{ position: 'relative', marginBottom: '6px' }}>
-          <input
-            type={showApiKey[activeProvider] ? 'text' : 'password'}
-            value={currentApiKey}
-            onChange={(e) => onUpdateApiKey(activeProvider, e.target.value)}
-            placeholder={`Paste your ${PROVIDERS.find((p) => p.id === activeProvider)?.label} API key…`}
-            style={{ ...inputStyle, paddingRight: '46px' }}
-          />
-          <button
-            onClick={() => setShowApiKey((prev) => ({ ...prev, [activeProvider]: !prev[activeProvider] }))}
-            style={{
-              position: 'absolute',
-              right: '10px',
-              top: '50%',
-              transform: 'translateY(-50%)',
-              color: '#4a4a54',
-              width: '32px',
-              height: '32px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            {showApiKey[activeProvider] ? <EyeOff size={15} /> : <Eye size={15} />}
-          </button>
-        </div>
-        {!currentApiKey && (
-          <p style={{ fontSize: '11px', color: '#f59e0b', margin: '4px 0 0', display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <AlertTriangle size={11} /> Add an API key to use AI features.
-          </p>
+            {/* API Key */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+              <FieldLabel style={{ margin: 0 }}>
+                API Key — {builtinGroup.label}
+              </FieldLabel>
+              <a
+                href={API_KEY_LINKS[activeProvider]}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ fontSize: '11px', color: '#a855f7', display: 'flex', alignItems: 'center', gap: '2px' }}
+              >
+                Get key <ChevronRight size={11} />
+              </a>
+            </div>
+            <div style={{ position: 'relative', marginBottom: '6px' }}>
+              <input
+                type={showApiKey ? 'text' : 'password'}
+                value={currentApiKey}
+                onChange={(e) => onUpdateApiKey(activeProvider, e.target.value)}
+                placeholder={`Paste your ${builtinGroup.label} API key…`}
+                style={{ ...inputStyle, paddingRight: '46px' }}
+              />
+              <button
+                onClick={() => setShowApiKey((v) => !v)}
+                style={{
+                  position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)',
+                  color: '#4a4a54', width: '32px', height: '32px',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                {showApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
+              </button>
+            </div>
+            {!currentApiKey && (
+              <p style={{ fontSize: '11px', color: '#f59e0b', margin: '4px 0 0', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <AlertTriangle size={11} /> Add an API key to use AI features.
+              </p>
+            )}
+            {currentApiKey && (
+              <p style={{ fontSize: '11px', color: '#4a4a54', margin: '4px 0 0' }}>
+                Stored locally in your browser only — never sent to any server.
+              </p>
+            )}
+
+            {/* Current model badge */}
+            <div style={{ marginTop: '12px', padding: '8px 12px', background: '#141416', border: '1px solid #2a2a30', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Zap size={12} style={{ color: builtinGroup.color, flexShrink: 0 }} />
+              <span style={{ fontSize: '12px', color: '#8b8b96' }}>Active model:</span>
+              <span style={{ fontSize: '12px', color: '#f0f0f2', fontFamily: 'monospace', fontWeight: 600 }}>
+                {settings.activeModel}
+              </span>
+            </div>
+          </>
         )}
-        {currentApiKey && (
-          <p style={{ fontSize: '11px', color: '#4a4a54', margin: '4px 0 0' }}>
-            Stored locally in your browser only — never sent to any server.
-          </p>
+
+        {/* ── Custom provider ────────────────────────────────────────────── */}
+        {isCustom && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{ padding: '8px 12px', background: '#1a0533', border: '1px solid rgba(168,85,247,0.3)', borderRadius: '8px' }}>
+              <p style={{ fontSize: '12px', color: '#c084fc', margin: 0, lineHeight: 1.5 }}>
+                Custom mode: use any OpenAI-compatible endpoint (OpenRouter, Groq, local proxy, etc.)
+              </p>
+            </div>
+
+            <div>
+              <FieldLabel>Provider Label</FieldLabel>
+              <input
+                type="text"
+                value={customDraft.label}
+                onChange={(e) => handleCustomChange('label', e.target.value)}
+                placeholder="e.g. OpenRouter, Groq, Local Proxy"
+                style={inputStyle}
+              />
+            </div>
+
+            <div>
+              <FieldLabel>Base Endpoint URL</FieldLabel>
+              <input
+                type="url"
+                value={customDraft.endpoint}
+                onChange={(e) => handleCustomChange('endpoint', e.target.value)}
+                placeholder="https://api.openai.com/v1"
+                style={{ ...inputStyle, fontFamily: 'monospace', fontSize: '12px' }}
+              />
+              <p style={{ fontSize: '11px', color: '#4a4a54', margin: '4px 0 0' }}>
+                Must be an OpenAI-compatible /chat/completions endpoint.
+              </p>
+            </div>
+
+            <div>
+              <FieldLabel>Model String</FieldLabel>
+              <input
+                type="text"
+                value={customDraft.model}
+                onChange={(e) => handleCustomChange('model', e.target.value)}
+                placeholder="e.g. claude-sonnet-4-6 or gpt-5.4"
+                style={{ ...inputStyle, fontFamily: 'monospace', fontSize: '12px' }}
+              />
+            </div>
+
+            <div>
+              <FieldLabel>API Key</FieldLabel>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={showCustomApiKey ? 'text' : 'password'}
+                  value={customDraft.apiKey}
+                  onChange={(e) => handleCustomChange('apiKey', e.target.value)}
+                  placeholder="Your API key"
+                  style={{ ...inputStyle, paddingRight: '46px' }}
+                />
+                <button
+                  onClick={() => setShowCustomApiKey((v) => !v)}
+                  style={{
+                    position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)',
+                    color: '#4a4a54', width: '32px', height: '32px',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                >
+                  {showCustomApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
+              </div>
+              {!customDraft.apiKey && (
+                <p style={{ fontSize: '11px', color: '#f59e0b', margin: '4px 0 0', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <AlertTriangle size={11} /> Add an API key to use this provider.
+                </p>
+              )}
+            </div>
+
+            <div>
+              <FieldLabel>Extra Headers (optional JSON)</FieldLabel>
+              <textarea
+                value={customDraft.extraHeaders}
+                onChange={(e) => handleCustomChange('extraHeaders', e.target.value)}
+                placeholder={'{"HTTP-Referer": "https://myapp.com", "X-Title": "My App"}'}
+                rows={3}
+                style={{
+                  ...inputStyle, height: 'auto', minHeight: '72px', resize: 'vertical',
+                  fontFamily: 'monospace', fontSize: '11px', padding: '10px 14px', lineHeight: 1.5,
+                }}
+              />
+              <p style={{ fontSize: '11px', color: '#4a4a54', margin: '4px 0 0' }}>
+                Useful for OpenRouter (HTTP-Referer, X-Title) or other custom headers.
+              </p>
+            </div>
+
+            {/* Active config badge */}
+            {customDraft.model && (
+              <div style={{ padding: '8px 12px', background: '#141416', border: '1px solid #2a2a30', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Zap size={12} style={{ color: '#8b5cf6', flexShrink: 0 }} />
+                <span style={{ fontSize: '12px', color: '#8b8b96' }}>Active model:</span>
+                <span style={{ fontSize: '12px', color: '#f0f0f2', fontFamily: 'monospace', fontWeight: 600 }}>
+                  {customDraft.model}
+                </span>
+              </div>
+            )}
+          </div>
         )}
       </div>
 
@@ -238,11 +344,7 @@ export function SettingsScreen({
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{
-      padding: '16px 16px 8px',
-      borderBottom: '1px solid #1f1f23',
-      marginBottom: '0',
-    }}>
+    <div style={{ padding: '16px 16px 8px', borderBottom: '1px solid #1f1f23' }}>
       <p style={{ fontSize: '11px', fontWeight: 600, color: '#4a4a54', textTransform: 'uppercase', letterSpacing: '0.1em', margin: 0 }}>
         {children}
       </p>
@@ -261,11 +363,8 @@ function FieldLabel({ children, style }: { children: React.ReactNode; style?: Re
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <div style={{
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      height: '44px',
-      borderBottom: '1px solid #1f1f23',
+      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+      height: '44px', borderBottom: '1px solid #1f1f23',
     }}>
       <span style={{ fontSize: '14px', color: '#8b8b96' }}>{label}</span>
       <span style={{ fontSize: '14px', color: '#f0f0f2', fontWeight: 500 }}>{value}</span>
@@ -284,6 +383,7 @@ const inputStyle: React.CSSProperties = {
   padding: '0 14px',
   outline: 'none',
   display: 'block',
+  boxSizing: 'border-box',
 }
 
 const dangerBtn: React.CSSProperties = {

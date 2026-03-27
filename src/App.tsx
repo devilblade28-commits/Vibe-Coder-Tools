@@ -9,12 +9,12 @@ import { ModelSelector } from './ui/ModelSelector'
 import { ImportModal, type ImportResult } from './ui/ImportModal'
 import type {
   TabId, Project, ProjectFile, ProjectFolder, ProjectAsset, ChatMessage,
-  AIProvider, FileSystemUIState, AIFileAction,
+  AIProvider, FileSystemUIState, AIFileAction, CustomProviderConfig,
 } from './types'
 import * as projectService from './workspace/projectService'
 import * as ls from './storage/ls'
 import * as idb from './storage/idb'
-import { sendMessage, buildSystemPrompt } from './ai/providers'
+import { sendMessage, buildSystemPrompt, PROVIDER_MODELS } from './ai/providers'
 import { executeActions, buildActionSummary } from './ai/executeActions'
 import { v4 as uuid } from 'uuid'
 
@@ -282,7 +282,8 @@ export default function App() {
     abortRef.current = new AbortController()
 
     const provider = aiSettings.activeProvider
-    const apiKey = aiSettings.apiKeys[provider]
+    const isCustom = provider === 'custom'
+    const apiKey = isCustom ? aiSettings.customProvider.apiKey : (aiSettings.apiKeys[provider] ?? '')
 
     if (!apiKey) {
       setMessages((prev) =>
@@ -301,10 +302,13 @@ export default function App() {
     try {
       const systemPrompt = buildSystemPrompt(aiSettings.customInstruction, buildProjectContext())
 
+      const isCustomProvider = provider === 'custom'
       const result = await sendMessage({
         provider,
-        model: aiSettings.activeModel,
+        model: isCustomProvider ? aiSettings.customProvider.model : aiSettings.activeModel,
         apiKey,
+        endpoint: isCustomProvider ? aiSettings.customProvider.endpoint : undefined,
+        extraHeaders: isCustomProvider ? aiSettings.customProvider.extraHeaders : undefined,
         messages: [...messages, userMsg].filter((m) => m.role !== 'system'),
         systemPrompt,
         onChunk: (chunk) => {
@@ -387,6 +391,11 @@ export default function App() {
 
   const handleUpdateProvider = useCallback((provider: AIProvider) => {
     ls.setActiveProvider(provider)
+    // Auto-select first model for built-in providers
+    if (provider !== 'custom') {
+      const group = PROVIDER_MODELS.find((g) => g.provider === provider)
+      if (group) ls.setActiveModel(group.models[0].value)
+    }
     setAiSettings(ls.getAISettings())
   }, [])
 
@@ -402,6 +411,11 @@ export default function App() {
 
   const handleUpdateSystemInstruction = useCallback((text: string) => {
     ls.setCustomInstruction(text)
+    setAiSettings(ls.getAISettings())
+  }, [])
+
+  const handleUpdateCustomProvider = useCallback((config: CustomProviderConfig) => {
+    ls.setCustomProviderConfig(config)
     setAiSettings(ls.getAISettings())
   }, [])
 
@@ -460,7 +474,8 @@ export default function App() {
             projectName={project?.name ?? 'Project'}
             onRenameProject={handleRenameProject}
             activeProvider={activeProvider}
-            activeModel={activeModel}
+            activeModel={activeProvider === 'custom' ? aiSettings.customProvider.model : activeModel}
+            customProviderLabel={aiSettings.customProvider.label}
             onOpenModelSelector={() => setShowModelSelector(true)}
             onOpenSettings={() => setActiveTab('settings')}
           />
@@ -518,6 +533,7 @@ export default function App() {
             onUpdateModel={handleUpdateModel}
             onUpdateApiKey={handleUpdateApiKey}
             onUpdateSystemInstruction={handleUpdateSystemInstruction}
+            onUpdateCustomProvider={handleUpdateCustomProvider}
             onDeleteProject={handleDeleteProject}
             onResetAll={handleResetAll}
           />

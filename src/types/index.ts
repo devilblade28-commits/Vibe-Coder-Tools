@@ -69,9 +69,18 @@ export interface ChatMessage {
 
 // ─── AI ──────────────────────────────────────────────────────────────────────
 
-export type AIProvider = 'gemini' | 'claude' | 'openai'
+export type AIProvider = 'gemini' | 'claude' | 'openai' | 'custom'
 
-export type AIActionType = 'create_file' | 'update_file' | 'delete_file' | 'create_folder'
+/** Configuration for the Custom provider mode */
+export interface CustomProviderConfig {
+  label: string       // e.g. "OpenRouter", "Groq", "Local Proxy"
+  endpoint: string    // e.g. "https://api.openai.com/v1"
+  model: string       // e.g. "claude-sonnet-4-6"
+  apiKey: string
+  extraHeaders: string // JSON string of extra headers (optional)
+}
+
+export type AIActionType = 'create_file' | 'update_file' | 'delete_file' | 'create_folder' | 'rename_file'
 
 export interface AIFileAction {
   action: AIActionType

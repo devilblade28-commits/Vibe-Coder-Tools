@@ -9,7 +9,7 @@ import * as projectService from '../workspace/projectService'
 
 // ─── Validation ───────────────────────────────────────────────────────────────
 
-const VALID_ACTIONS: AIActionType[] = ['create_file', 'update_file', 'delete_file', 'create_folder']
+const VALID_ACTIONS: AIActionType[] = ['create_file', 'update_file', 'delete_file', 'create_folder', 'rename_file']
 
 export function validateAction(action: unknown): ValidationResult {
   if (typeof action !== 'object' || action === null) {
@@ -104,6 +104,16 @@ async function executeAction(
       const name = action.folder ?? action.file
       await projectService.createFolder(projectId, name)
       return undefined
+    }
+
+    case 'rename_file': {
+      if (!action.newName) throw new Error(`"newName" is required for rename_file`)
+      const files = await projectService.getProjectFiles(projectId)
+      const file = files.find((f) => f.name.toLowerCase() === action.file.toLowerCase())
+      if (!file) throw new Error(`File "${action.file}" not found in project`)
+      const updated = { ...file, name: action.newName, updatedAt: new Date().toISOString() }
+      await import('../storage/idb').then((idb) => idb.putFile(updated))
+      return updated
     }
 
     default: {
