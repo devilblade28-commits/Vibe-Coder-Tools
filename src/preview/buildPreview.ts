@@ -7,9 +7,11 @@
  * 3. Inline JS files referenced via <script src="...">
  * 4. Auto-inject any unreferenced CSS/JS files that exist in the project
  * 5. Replace asset filename references with base64 data URLs or blob object URLs
+ * 6. Inject console interceptor to capture console output
  */
 
 import type { ProjectFile, ProjectAsset } from '../filesystem/filesystemTypes'
+import { CONSOLE_INTERCEPTOR_SCRIPT } from './consoleInterceptor'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -149,12 +151,15 @@ window.addEventListener('unhandledrejection', function(e) {
 });
 </script>`
 
+  // ── 7. Inject console interceptor into iframe ────────────────────────────
+  const consoleInterceptor = `<script>${CONSOLE_INTERCEPTOR_SCRIPT}</script>`
+
   if (html.includes('<head>')) {
-    html = html.replace('<head>', `<head>\n${errorReporter}`)
+    html = html.replace('<head>', `<head>\n${errorReporter}\n${consoleInterceptor}`)
   } else if (html.includes('<html>')) {
-    html = html.replace('<html>', `<html>\n${errorReporter}`)
+    html = html.replace('<html>', `<html>\n${errorReporter}\n${consoleInterceptor}`)
   } else {
-    html = errorReporter + '\n' + html
+    html = errorReporter + '\n' + consoleInterceptor + '\n' + html
   }
 
   return { html, hasHtml: true }

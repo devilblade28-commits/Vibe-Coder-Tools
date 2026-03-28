@@ -1,6 +1,9 @@
-import { useState, useRef, useEffect } from 'react'
-import { Send, Square, RotateCcw, Copy, Check, Maximize2, X, Loader2 } from 'lucide-react'
+import React, { useState, useRef, useEffect } from 'react'
+import { Send, Square, RotateCcw, Copy, Check, Maximize2, X, Loader2, FileCode } from 'lucide-react'
 import type { ChatMessage, ActionExecutionResult, AIFileAction } from '../types'
+import { TemplateModal } from './TemplateModal'
+import { DiffViewer } from './DiffViewer'
+import type { ProjectTemplate } from '../data/templates'
 
 interface ChatScreenProps {
   messages: ChatMessage[]
@@ -13,6 +16,7 @@ interface ChatScreenProps {
   onGoToSettings: () => void
   onApplyAction: (action: AIFileAction) => Promise<{ success: boolean; error?: string }>
   onOpenImport: () => void
+  onCreateFromTemplate?: (template: ProjectTemplate) => Promise<void>
 }
 
 const QUICK_ACTIONS = [
@@ -21,6 +25,7 @@ const QUICK_ACTIONS = [
   { label: '🐛 Fix Bug', prompt: 'Periksa semua file di project ini dan perbaiki bug atau error yang mungkin ada.' },
   { label: '🎨 Improve UI', prompt: 'Perbaiki tampilan dan UX app ini. Buat lebih modern, rapi, dan mobile-friendly.' },
   { label: '📁 Import Files', prompt: '__IMPORT__' },
+  { label: '📄 Create from Template', prompt: '__TEMPLATE__' },
 ]
 
 export function ChatScreen({
@@ -34,10 +39,12 @@ export function ChatScreen({
   onGoToSettings,
   onApplyAction,
   onOpenImport,
+  onCreateFromTemplate,
 }: ChatScreenProps) {
   const [input, setInput] = useState('')
   const listRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const [showTemplateModal, setShowTemplateModal] = useState(false)
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -71,6 +78,8 @@ export function ChatScreen({
   const handleQuickAction = (prompt: string) => {
     if (prompt === '__IMPORT__') {
       onOpenImport()
+    } else if (prompt === '__TEMPLATE__') {
+      setShowTemplateModal(true)
     } else {
       onSend(prompt)
     }
@@ -289,6 +298,14 @@ export function ChatScreen({
           to { opacity: 1; transform: scale(1); }
         }
       `}</style>
+
+      {showTemplateModal && onCreateFromTemplate && (
+        <TemplateModal
+          isOpen={showTemplateModal}
+          onSelect={onCreateFromTemplate}
+          onClose={() => setShowTemplateModal(false)}
+        />
+      )}
     </div>
   )
 }
@@ -637,6 +654,7 @@ function ArtifactCard({
 }) {
   const [copied, setCopied] = useState(false)
   const [expanded, setExpanded] = useState(false)
+  const [showDiff, setShowDiff] = useState(false)
   const [applying, setApplying] = useState(false)
   const [applied, setApplied] = useState(false)
   const [applyError, setApplyError] = useState<string | null>(null)
@@ -691,7 +709,7 @@ function ArtifactCard({
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '9px 12px',
-          borderBottom: (preview) ? '1px solid #1f1f23' : 'none',
+          borderBottom: (preview || !result.success || result.error || isDeleteOrFolder) ? '1px solid #1f1f23' : 'none',
           gap: '8px',
         }}>
           {/* Left: icon + filename */}
@@ -823,6 +841,31 @@ function ArtifactCard({
               </button>
             )}
 
+            {/* Diff button */}
+            {result.action.oldContent && result.action.content && (
+              <button
+                onClick={() => setShowDiff(true)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  padding: '4px 9px',
+                  height: '28px',
+                  background: '#1c1c1f',
+                  border: '1px solid #2a2a30',
+                  borderRadius: '6px',
+                  color: '#8b8b96',
+                  fontSize: '11px',
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                  flexShrink: 0,
+                }}
+              >
+                <FileCode size={11} />
+                Diff
+              </button>
+            )}
+
             {/* Spacer */}
             <div style={{ flex: 1 }} />
 
@@ -929,6 +972,18 @@ function ArtifactCard({
           filename={filename}
           content={result.action.content!}
           onClose={() => setExpanded(false)}
+        />
+      )}
+
+      {/* Diff modal */}
+      {showDiff && result.action.oldContent && result.action.content && (
+        <DiffViewer
+          filename={filename}
+          oldText={result.action.oldContent}
+          newText={result.action.content}
+          onAccept={handleApply}
+          onReject={() => setShowDiff(false)}
+          showActions={!applied}
         />
       )}
 

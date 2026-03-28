@@ -1,27 +1,11 @@
-import { useState, useCallback } from 'react'
+import React, { useState, useCallback } from 'react'
 import {
   FilePlus, ChevronRight, ChevronDown,
-  MoreHorizontal, ChevronLeft, FileText, Image, Folder, Upload,  X, Pencil,
+  MoreHorizontal, ChevronLeft, FileText, Image, Folder, Upload, X, Pencil, Split, Columns,
 } from 'lucide-react'
 import type { ProjectFile, ProjectFolder, ProjectAsset, FileSystemUIState } from '../types'
 import { getFileExtension } from '../workspace/projectService'
 import { CodeEditor } from './CodeEditor'
-
-interface FilesScreenProps {
-  files: ProjectFile[]
-  folders: ProjectFolder[]
-  assets: ProjectAsset[]
-  activeFileId: string | null
-  uiState: FileSystemUIState
-  onUiStateChange: (state: FileSystemUIState) => void
-  onSelectFile: (file: ProjectFile) => void
-  onCreateFile: (name: string) => void
-  onDeleteFile: (file: ProjectFile) => void
-  onUpdateContent: (fileId: string, content: string) => void
-  onOpenImport: () => void
-  onRenameFile: (fileId: string, newName: string) => Promise<void>
-  onCloseTab: (fileId: string) => void
-}
 
 // File type colors matching VS Code conventions
 const FILE_COLORS: Record<string, string> = {
@@ -51,6 +35,46 @@ function FileTypeIcon({ name }: { name: string }) {
   return <FileText size={15} style={{ color, flexShrink: 0 }} />
 }
 
+// Build breadcrumb path from file and folders
+function buildBreadcrumb(file: ProjectFile, folders: ProjectFolder[]): string[] {
+  const path: string[] = []
+  
+  // Find folder chain
+  let currentFolderId = file.folderId
+  const folderMap = new Map(folders.map(f => [f.id, f]))
+  
+  while (currentFolderId) {
+    const folder = folderMap.get(currentFolderId)
+    if (folder) {
+      path.unshift(folder.name)
+      currentFolderId = folder.parentId
+    } else {
+      break
+    }
+  }
+  
+  // Add filename
+  path.push(file.name)
+  
+  return path
+}
+
+interface FilesScreenProps {
+  files: ProjectFile[]
+  folders: ProjectFolder[]
+  assets: ProjectAsset[]
+  activeFileId: string | null
+  uiState: FileSystemUIState
+  onUiStateChange: (state: FileSystemUIState) => void
+  onSelectFile: (file: ProjectFile) => void
+  onCreateFile: (name: string) => void
+  onDeleteFile: (file: ProjectFile) => void
+  onUpdateContent: (fileId: string, content: string) => void
+  onOpenImport: () => void
+  onRenameFile: (fileId: string, newName: string) => Promise<void>
+  onCloseTab: (fileId: string) => void
+}
+
 export function FilesScreen({
   files, folders, assets, activeFileId, uiState, onUiStateChange,
   onSelectFile, onCreateFile, onDeleteFile, onUpdateContent, onOpenImport,
@@ -64,8 +88,13 @@ export function FilesScreen({
   const [renameValue, setRenameValue] = useState('')
 
   const activeFile = files.find((f) => f.id === activeFileId) ?? null
+  
+  // Split view state
+  const [isSplitView, setIsSplitView] = useState(false)
+  const [splitViewFileId, setSplitViewFileId] = useState<string | null>(null)
+  const splitFile = files.find((f) => f.id === splitViewFileId) ?? null
 
-  const setView = (v: 'tree' | 'editor') => onUiStateChange({ ...uiState, view: v })
+  const setView = (v: 'tree' | 'editor' | 'split') => onUiStateChange({ ...uiState, view: v })
   const toggleFolder = (id: string) => {
     const next = expandedFolderIds.includes(id)
       ? expandedFolderIds.filter((x) => x !== id)
@@ -421,18 +450,33 @@ export function FilesScreen({
         {activeFile ? (
           <>
             <FileTypeIcon name={activeFile.name} />
-            <span style={{
+            {/* Breadcrumb path */}
+            <div style={{
               flex: 1,
-              fontSize: '13px',
-              fontWeight: 500,
-              color: '#f0f0f2',
-              fontFamily: "'Geist Mono', 'JetBrains Mono', monospace",
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
               overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
+              minWidth: 0,
             }}>
-              {activeFile.name}
-            </span>
+              {buildBreadcrumb(activeFile, folders).map((part, i, arr) => (
+                <React.Fragment key={i}>
+                  <span style={{
+                    fontSize: '13px',
+                    fontWeight: i === arr.length - 1 ? 500 : 400,
+                    color: i === arr.length - 1 ? '#f0f0f2' : '#6d6d7a',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}>
+                    {part}
+                  </span>
+                  {i < arr.length - 1 && (
+                    <ChevronRight size={12} style={{ color: '#4a4a54', flexShrink: 0 }} />
+                  )}
+                </React.Fragment>
+              ))}
+            </div>
             <span style={{ fontSize: '11px', color: '#3d3d45', flexShrink: 0, paddingRight: '4px' }}>
               {activeFile.type === 'text' ? `${(activeFile.size / 1024).toFixed(1)} KB` : activeFile.mimeType}
             </span>
@@ -440,17 +484,105 @@ export function FilesScreen({
         ) : (
           <span style={{ flex: 1, fontSize: '13px', color: '#6d6d7a' }}>No file selected</span>
         )}
+        {/* Split view toggle */}
+        {activeFile && activeFile.type === 'text' && (
+          <button
+            onClick={() => setIsSplitView(!isSplitView)}
+            title={isSplitView ? 'Close split view' : 'Open split view'}
+            style={{
+              width: '32px', height: '32px',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              borderRadius: '6px', color: isSplitView ? '#a855f7' : '#6d6d7a',
+              background: isSplitView ? 'rgba(168, 85, 247, 0.15)' : 'transparent',
+              border: '1px solid #2a2a30',
+              WebkitTapHighlightColor: 'transparent',
+            }}
+          >
+            <Columns size={14} />
+          </button>
+        )}
       </div>
+
+      {/* Split view file selector */}
+      {isSplitView && activeFile && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          padding: '8px 12px',
+          background: '#0d0d0f',
+          borderBottom: '1px solid #1f1f23',
+          flexShrink: 0,
+        }}>
+          <span style={{ fontSize: '11px', color: '#4a4a54' }}>Split with:</span>
+          <select
+            value={splitViewFileId ?? ''}
+            onChange={(e) => setSplitViewFileId(e.target.value || null)}
+            style={{
+              flex: 1,
+              background: '#1c1c1f',
+              border: '1px solid #2a2a30',
+              borderRadius: '6px',
+              padding: '6px 10px',
+              color: '#f0f0f2',
+              fontSize: '12px',
+              outline: 'none',
+            }}
+          >
+            <option value="">Select file...</option>
+            {files.filter(f => f.type === 'text' && f.id !== activeFile.id).map(f => (
+              <option key={f.id} value={f.id}>{f.name}</option>
+            ))}
+          </select>
+          {splitFile && (
+            <button
+              onClick={() => setSplitViewFileId(null)}
+              style={{
+                padding: '4px 8px',
+                background: '#1c1c1f',
+                border: '1px solid #2a2a30',
+                borderRadius: '4px',
+                color: '#6d6d7a',
+                fontSize: '11px',
+              }}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Editor body */}
       {activeFile ? (
         activeFile.type === 'text' ? (
-          <CodeEditor
-            key={activeFile.id}
-            value={activeFile.content}
-            filename={activeFile.name}
-            onChange={(content) => onUpdateContent(activeFile.id, content)}
-          />
+          isSplitView && splitFile ? (
+            /* Split view with two editors */
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <div style={{ flex: 1, overflow: 'hidden', borderBottom: '1px solid #1f1f23' }}>
+                <CodeEditor
+                  key={activeFile.id}
+                  value={activeFile.content}
+                  filename={activeFile.name}
+                  onChange={(content) => onUpdateContent(activeFile.id, content)}
+                />
+              </div>
+              <div style={{ flex: 1, overflow: 'hidden' }}>
+                <CodeEditor
+                  key={splitFile.id}
+                  value={splitFile.content}
+                  filename={splitFile.name}
+                  onChange={(content) => onUpdateContent(splitFile.id, content)}
+                />
+              </div>
+            </div>
+          ) : (
+            <CodeEditor
+              key={activeFile.id}
+              value={activeFile.content}
+              filename={activeFile.name}
+              onChange={(content) => onUpdateContent(activeFile.id, content)}
+            />
+          )
         ) : (
           <div style={{
             flex: 1,

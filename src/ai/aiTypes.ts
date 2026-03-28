@@ -41,6 +41,7 @@ export interface AIFileAction {
   file: string         // filename for file actions
   folder?: string      // folder name for create_folder
   content?: string     // for create_file / update_file
+  oldContent?: string  // previous content for update_file (for diff view)
   newName?: string     // for rename_file
 }
 

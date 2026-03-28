@@ -90,7 +90,7 @@ export default function App() {
     const newProject = await workspace.createProject('New Project')
     workspace.setActiveProject(newProject)
     ai.clearMessages()
-    setFsUiState({ view: 'tree', expandedFolderIds: [], isCreatingFile: false })
+    setFsUiState({ view: 'tree', expandedFolderIds: [], isCreatingFile: false, openFileIds: [] })
   }, [project, workspace, fileSystem, ai])
   
   // ─── File Operations ────────────────────────────────────────────────────────

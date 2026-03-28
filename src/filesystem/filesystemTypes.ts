@@ -89,7 +89,7 @@ export interface ProjectAsset {
  * Tracks view mode, expanded folders, open files, and creation state.
  */
 export interface FileSystemUIState {
-  view: 'tree' | 'editor'
+  view: 'tree' | 'editor' | 'split'
   expandedFolderIds: string[]
   isCreatingFile: boolean
   openFileIds: string[]

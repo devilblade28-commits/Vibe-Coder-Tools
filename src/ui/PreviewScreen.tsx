@@ -2,6 +2,7 @@ import { useRef, useEffect, useState, useCallback } from 'react'
 import { RefreshCw, Maximize2, X, AlertTriangle } from 'lucide-react'
 import type { ProjectFile, ProjectAsset } from '../types'
 import { buildPreviewDocument, revokePreviewObjectUrls } from '../preview/buildPreview'
+import { ConsolePanel, type ConsoleEntry } from './ConsolePanel'
 
 interface PreviewScreenProps {
   files: ProjectFile[]
@@ -19,11 +20,13 @@ export function PreviewScreen({ files, assets, refreshTrigger }: PreviewScreenPr
   const [isUpdating, setIsUpdating] = useState(false)
   const [lastUpdated, setLastUpdated] = useState('')
   const [jsErrors, setJsErrors] = useState<string[]>([])
+  const [consoleEntries, setConsoleEntries] = useState<ConsoleEntry[]>([])
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const applyPreview = useCallback((currentFiles: ProjectFile[]) => {
     setIsUpdating(true)
     setJsErrors([])
+    setConsoleEntries([])
 
     const { html, hasHtml: found } = buildPreviewDocument(currentFiles, assets)
     setHasHtml(found)
@@ -67,12 +70,23 @@ export function PreviewScreen({ files, assets, refreshTrigger }: PreviewScreenPr
   // Revoke object URLs on unmount
   useEffect(() => () => revokePreviewObjectUrls(), [])
 
-  // Listen for JS errors from iframe
+  // Listen for JS errors and console logs from iframe
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       if (e.data?.type === 'preview-error') {
         const msg = `${e.data.message}${e.data.line ? ` (line ${e.data.line})` : ''}`
         setJsErrors((prev) => [...prev.slice(-3), msg])
+      } else if (e.data?.type === 'console-log') {
+        const { logType, args, timestamp } = e.data
+        const entry: ConsoleEntry = {
+          id: `${timestamp}-${Math.random().toString(36).slice(2)}`,
+          type: logType,
+          args: args || [],
+          timestamp: timestamp || Date.now(),
+        }
+        setConsoleEntries((prev) => [...prev.slice(-50), entry])
+      } else if (e.data?.type === 'console-clear') {
+        setConsoleEntries([])
       }
     }
     window.addEventListener('message', handler)
@@ -158,6 +172,14 @@ export function PreviewScreen({ files, assets, refreshTrigger }: PreviewScreenPr
             </button>
           </div>
         )}
+
+        {/* Console Panel */}
+        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}>
+          <ConsolePanel 
+            entries={consoleEntries} 
+            onClear={() => setConsoleEntries([])} 
+          />
+        </div>
       </div>
 
       {/* Fullscreen overlay */}

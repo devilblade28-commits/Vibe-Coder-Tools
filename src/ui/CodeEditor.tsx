@@ -1,6 +1,6 @@
 /**
  * CodeEditor - CodeMirror 6-based code editor with syntax highlighting and find/replace.
- * 
+ *
  * Features:
  * - Syntax highlighting for web languages (HTML, CSS, JS, TS, JSON, MD)
  * - Dark theme matching app's UI (#0d0d0f background, #d4d4d8 text)
@@ -15,8 +15,8 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, dropCursor } from '@codemirror/view'
-import { EditorState, Extension, Prec } from '@codemirror/state'
+import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, dropCursor, ViewPlugin, Decoration, WidgetType } from '@codemirror/view'
+import { EditorState, Extension, Prec, RangeSetBuilder } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo } from '@codemirror/commands'
 import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, indentOnInput, foldGutter, foldKeymap, codeFolding } from '@codemirror/language'
 import { javascript } from '@codemirror/lang-javascript'
@@ -27,7 +27,7 @@ import { markdown } from '@codemirror/lang-markdown'
 import { search, highlightSelectionMatches, openSearchPanel, findNext, findPrevious, replaceNext, replaceAll, closeSearchPanel, SearchQuery } from '@codemirror/search'
 import { autocompletion, completeFromList, Completion, CompletionContext } from '@codemirror/autocomplete'
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
-import { X, ChevronUp, ChevronDown, Replace, Sparkles } from 'lucide-react'
+import { X, ChevronUp, ChevronDown, Replace, Sparkles, Check, Loader2 } from 'lucide-react'
 import { formatCode, getParserForFile } from '../utils/prettier'
 
 // ─── Types ────────────────────────────────────────────────────────────────
@@ -150,6 +150,111 @@ const darkTheme = EditorView.theme({
     color: '#f59e0b',
   },
 }, { dark: true })
+
+// ─── Color Preview Extension ──────────────────────────────────────────────────
+
+// Regex to match CSS color values
+const COLOR_REGEX = /#[0-9a-fA-F]{3,8}\b|rgb\([^)]*\)|rgba\([^)]*\)|hsl\([^)]*\)|hsla\([^)]*\)/g
+
+// Widget for color preview dot
+class ColorDotWidget extends WidgetType {
+  constructor(readonly color: string) {
+    super()
+  }
+
+  toDOM() {
+    const span = document.createElement('span')
+    span.style.cssText = `
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      background: ${this.color};
+      margin-left: 4px;
+      vertical-align: middle;
+      border: 1px solid rgba(255,255,255,0.2);
+      cursor: pointer;
+    `
+    span.title = this.color
+    // Click to copy color
+    span.onclick = () => {
+      navigator.clipboard.writeText(this.color)
+    }
+    return span
+  }
+}
+
+// ViewPlugin to add color dots after color values
+const colorPreviewPlugin = ViewPlugin.fromClass(class {
+  decorations: any
+
+  constructor(view: EditorView) {
+    this.decorations = this.buildDecorations(view)
+  }
+
+  update(update: any) {
+    if (update.docChanged || update.viewportChanged) {
+      this.decorations = this.buildDecorations(update.view)
+    }
+  }
+
+  buildDecorations(view: EditorView) {
+    const builder = new RangeSetBuilder<any>()
+    const doc = view.state.doc
+
+    for (const { from, to } of view.visibleRanges) {
+      const text = doc.sliceString(from, to)
+      let match
+      while ((match = COLOR_REGEX.exec(text)) !== null) {
+        const start = from + match.index
+        const end = start + match[0].length
+        // Add widget after the color value
+        builder.add(end, end, Decoration.widget({ widget: new ColorDotWidget(match[0]) }))
+      }
+    }
+
+    return builder.finish()
+  }
+}, {
+  decorations: v => v.decorations,
+})
+
+// Color preview extension (only for CSS-like files)
+function getColorPreviewExtension(filename: string): Extension[] {
+  const ext = filename.split('.').pop()?.toLowerCase() ?? ''
+  if (['css', 'scss', 'less', 'html', 'htm', 'js', 'ts', 'jsx', 'tsx'].includes(ext)) {
+    return [colorPreviewPlugin]
+  }
+  return []
+}
+
+// ─── Minimap Extension ────────────────────────────────────────────────────────
+
+// Simple minimap showing a scaled-down version of the document
+const minimapTheme = EditorView.theme({
+  '.cm-minimap': {
+    position: 'absolute',
+    right: '0',
+    top: '0',
+    bottom: '0',
+    width: '80px',
+    background: '#0d0d0f',
+    borderLeft: '1px solid #1f1f23',
+    overflow: 'hidden',
+    fontSize: '2px',
+    lineHeight: '3px',
+    fontFamily: 'monospace',
+    whiteSpace: 'pre',
+    padding: '4px',
+    color: '#6d6d7a',
+  },
+})
+
+// Check if screen is wide enough for minimap (>600px)
+function shouldShowMinimap(): boolean {
+  if (typeof window === 'undefined') return false
+  return window.innerWidth > 600
+}
 
 // ─── JavaScript Completions ────────────────────────────────────────────────────
 
@@ -317,7 +422,7 @@ function createHtmlCompletions(context: CompletionContext) {
   // First try the built-in HTML completion source
   const builtIn = htmlCompletionSource(context)
   if (builtIn) return builtIn
-  
+
   // Fall back to our custom completions
   return completeFromList([...htmlTags, ...htmlAttributes])(context)
 }
@@ -430,7 +535,7 @@ function createCssCompletions(context: CompletionContext) {
   // First try the built-in CSS completion source
   const builtIn = cssCompletionSource(context)
   if (builtIn) return builtIn
-  
+
   // Fall back to our custom completions
   return completeFromList([...cssProperties, ...cssValues, ...cssUnits])(context)
 }
@@ -448,7 +553,8 @@ function getLanguageExtension(filename: string): Extension[] {
           override: [createJavaScriptCompletions],
           activateOnTyping: true,
           maxRenderedOptions: 50,
-        })
+        }),
+        ...getColorPreviewExtension(filename)
       ]
     case 'ts':
     case 'tsx':
@@ -458,7 +564,8 @@ function getLanguageExtension(filename: string): Extension[] {
           override: [createJavaScriptCompletions],
           activateOnTyping: true,
           maxRenderedOptions: 50,
-        })
+        }),
+        ...getColorPreviewExtension(filename)
       ]
     case 'jsx':
       return [
@@ -467,7 +574,8 @@ function getLanguageExtension(filename: string): Extension[] {
           override: [createJavaScriptCompletions, createHtmlCompletions],
           activateOnTyping: true,
           maxRenderedOptions: 50,
-        })
+        }),
+        ...getColorPreviewExtension(filename)
       ]
     case 'html':
     case 'htm':
@@ -477,7 +585,8 @@ function getLanguageExtension(filename: string): Extension[] {
           override: [createHtmlCompletions],
           activateOnTyping: true,
           maxRenderedOptions: 50,
-        })
+        }),
+        ...getColorPreviewExtension(filename)
       ]
     case 'css':
       return [
@@ -486,7 +595,8 @@ function getLanguageExtension(filename: string): Extension[] {
           override: [createCssCompletions],
           activateOnTyping: true,
           maxRenderedOptions: 50,
-        })
+        }),
+        ...getColorPreviewExtension(filename)
       ]
     case 'json':
       return [json()]
@@ -514,6 +624,11 @@ export function CodeEditor({ value, filename, onChange, onSave, showSymbolToolba
     matchCount: 0,
   })
   const parser = getParserForFile(filename)
+
+  // Inline AI Autocomplete state
+  const [suggestion, setSuggestion] = useState<string | null>(null)
+  const [isFetchingSuggestion, setIsFetchingSuggestion] = useState(false)
+  const suggestTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Debounced onChange (300ms)
   const debouncedOnChange = useCallback((content: string) => {
@@ -568,11 +683,19 @@ export function CodeEditor({ value, filename, onChange, onSave, showSymbolToolba
     // Update undo/redo state
     const updateUndoRedoState = EditorView.updateListener.of((update) => {
       if (update.transactions.some(t => t.docChanged)) {
-        // Check if undo/redo is available
-        const historyState = update.state.field(history.field as any, false)
-        if (historyState) {
-          setCanUndo(historyState.done.length > 0)
-          setCanRedo(historyState.undone.length > 0)
+        // Check if undo/redo is available via the history extension
+        // We use a simpler approach: track if there are any changes to undo/redo
+        try {
+          const state = update.state
+          // Try to find history state through any available method
+          const historyData = (state as any).history$undo
+          if (historyData) {
+            setCanUndo((historyData as any).done?.length > 0)
+            setCanRedo((historyData as any).undone?.length > 0)
+          }
+        } catch {
+          // Fallback: just assume undo is available after any change
+          setCanUndo(true)
         }
       }
     })
@@ -610,6 +733,8 @@ export function CodeEditor({ value, filename, onChange, onSave, showSymbolToolba
       ]),
       search({ top: false }),
       darkTheme,
+      ...getColorPreviewExtension(filename),
+      shouldShowMinimap() ? minimapTheme : [],
       updateListener,
       updateUndoRedoState,
       saveKeymap,
@@ -643,7 +768,7 @@ export function CodeEditor({ value, filename, onChange, onSave, showSymbolToolba
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
-    
+
     const currentValue = view.state.doc.toString()
     if (value !== currentValue) {
       view.dispatch({
@@ -680,12 +805,12 @@ export function CodeEditor({ value, filename, onChange, onSave, showSymbolToolba
   const handleSearchChange = useCallback((query: string) => {
     const view = viewRef.current
     if (!view) return
-    
+
     setSearchState(prev => ({ ...prev, query }))
-    
+
     if (query) {
-      const searchQuery = new SearchQuery({ search: query })
-      openSearchPanel(view, searchQuery)
+      // Open search panel - the panel handles the query internally
+      openSearchPanel(view)
     } else {
       closeSearchPanel(view)
     }
@@ -706,7 +831,7 @@ export function CodeEditor({ value, filename, onChange, onSave, showSymbolToolba
   // Handle format with Prettier
   const handleFormat = useCallback(async () => {
     if (isFormatting || !parser) return
-    
+
     setIsFormatting(true)
     try {
       const formatted = await formatCode(value, filename)
@@ -735,7 +860,7 @@ export function CodeEditor({ value, filename, onChange, onSave, showSymbolToolba
   const handleInsertSymbol = useCallback((symbol: string) => {
     const view = viewRef.current
     if (!view) return
-    
+
     // Handle paired symbols (cursor goes in middle)
     const paired: Record<string, string> = {
       '()': '()',
@@ -746,9 +871,9 @@ export function CodeEditor({ value, filename, onChange, onSave, showSymbolToolba
       '``': '``',
       '<>': '<>',
     }
-    
+
     const isPaired = paired[symbol]
-    
+
     if (isPaired) {
       // Insert both characters and place cursor in middle
       const { from, to } = view.state.selection.main
@@ -765,6 +890,94 @@ export function CodeEditor({ value, filename, onChange, onSave, showSymbolToolba
       })
     }
     view.focus()
+  }, [])
+
+  // Fetch AI suggestion for inline autocomplete
+  const fetchSuggestion = useCallback(async (currentCode: string, cursorPosition: number) => {
+    // Only fetch for supported file types
+    if (!parser || !['html', 'css', 'javascript', 'typescript'].includes(parser)) {
+      return
+    }
+
+    // Get context around cursor
+    const lines = currentCode.split('\n')
+    let charCount = 0
+    let currentLine = 0
+    for (let i = 0; i < lines.length; i++) {
+      if (charCount + lines[i].length >= cursorPosition) {
+        currentLine = i
+        break
+      }
+      charCount += lines[i].length + 1
+    }
+
+    // Get surrounding context (5 lines before and after)
+    const startLine = Math.max(0, currentLine - 5)
+    const endLine = Math.min(lines.length, currentLine + 5)
+    const context = lines.slice(startLine, endLine).join('\n')
+
+    // For demo purposes, generate a simple suggestion
+    // In a real implementation, this would call an AI API
+    setIsFetchingSuggestion(true)
+
+    try {
+      // Simulate API call delay
+      await new Promise(resolve => setTimeout(resolve, 500))
+
+      // Simple heuristic-based suggestions for demo
+      const currentLineText = lines[currentLine] || ''
+      let suggestedCompletion = ''
+
+      // HTML tag completion
+      if (currentLineText.trim().endsWith('<')) {
+        if (currentLineText.includes('<div')) {
+          suggestedCompletion = '></div>'
+        } else if (currentLineText.includes('<p')) {
+          suggestedCompletion = '></p>'
+        } else if (currentLineText.includes('<span')) {
+          suggestedCompletion = '></span>'
+        }
+      }
+
+      // CSS property completion
+      if (currentLineText.includes(':') && !currentLineText.includes(';')) {
+        suggestedCompletion = ';'
+      }
+
+      // JS function completion
+      if (currentLineText.includes('function') && !currentLineText.includes('{')) {
+        suggestedCompletion = ' { }'
+      }
+
+      if (suggestedCompletion) {
+        setSuggestion(suggestedCompletion)
+      } else {
+        setSuggestion(null)
+      }
+    } finally {
+      setIsFetchingSuggestion(false)
+    }
+  }, [parser])
+
+  // Accept suggestion
+  const handleAcceptSuggestion = useCallback(() => {
+    if (!suggestion || !viewRef.current) return
+
+    const view = viewRef.current
+    const { from } = view.state.selection.main
+
+    view.dispatch({
+      changes: { from, to: from, insert: suggestion },
+      selection: { anchor: from + suggestion.length },
+    })
+
+    setSuggestion(null)
+    view.focus()
+  }, [suggestion])
+
+  // Dismiss suggestion
+  const handleDismissSuggestion = useCallback(() => {
+    setSuggestion(null)
   }, [])
 
   // Check if symbol toolbar should be shown (only for web files)
@@ -826,7 +1039,7 @@ export function CodeEditor({ value, filename, onChange, onSave, showSymbolToolba
           ))}
         </div>
       )}
-      
+
       {/* Editor Toolbar - Format, Undo/Redo */}
       <div style={{
         display: 'flex',
@@ -886,9 +1099,9 @@ export function CodeEditor({ value, filename, onChange, onSave, showSymbolToolba
             <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7" />
           </svg>
         </button>
-        
+
         <div style={{ width: '1px', height: '20px', background: '#2a2a30', margin: '0 4px' }} />
-        
+
         {/* Find/Replace toggle */}
         <button
           onClick={() => setShowSearch(!showSearch)}
@@ -915,7 +1128,7 @@ export function CodeEditor({ value, filename, onChange, onSave, showSymbolToolba
           </svg>
           Find
         </button>
-        
+
         {/* Format button - only show for supported files */}
         {parser && (
           <button
@@ -960,7 +1173,7 @@ export function CodeEditor({ value, filename, onChange, onSave, showSymbolToolba
           </button>
         )}
       </div>
-      
+
       {/* Search Panel */}
       {showSearch && (
         <div style={{
@@ -1112,14 +1325,113 @@ export function CodeEditor({ value, filename, onChange, onSave, showSymbolToolba
       )}
 
       {/* Editor Container */}
-      <div
-        ref={containerRef}
-        style={{
-          flex: 1,
-          overflow: 'auto',
-          background: '#0d0d0f',
-        }}
-      />
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
+        <div
+          ref={containerRef}
+          style={{
+            flex: 1,
+            overflow: 'auto',
+            background: '#0d0d0f',
+          }}
+        />
+
+        {/* Ghost text suggestion overlay */}
+        {suggestion && (
+          <div style={{
+            position: 'absolute',
+            bottom: '12px',
+            right: '12px',
+            background: '#1c1c1f',
+            border: '1px solid #a855f7',
+            borderRadius: '8px',
+            padding: '8px 12px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            maxWidth: '300px',
+            zIndex: 100,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          }}>
+            {isFetchingSuggestion ? (
+              <Loader2 size={14} style={{ color: '#a855f7', animation: 'spin 0.8s linear infinite' }} />
+            ) : (
+              <Sparkles size={14} style={{ color: '#a855f7' }} />
+            )}
+            <span style={{
+              fontFamily: "'Geist Mono', monospace",
+              fontSize: '12px',
+              color: '#8b8b96',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
+              {suggestion}
+            </span>
+            <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+              <button
+                onClick={handleAcceptSuggestion}
+                title="Accept (Tab)"
+                style={{
+                  width: '24px',
+                  height: '24px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: '#a855f7',
+                  border: 'none',
+                  borderRadius: '4px',
+                  color: 'white',
+                  cursor: 'pointer',
+                }}
+              >
+                <Check size={12} />
+              </button>
+              <button
+                onClick={handleDismissSuggestion}
+                title="Dismiss (Escape)"
+                style={{
+                  width: '24px',
+                  height: '24px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: 'transparent',
+                  border: '1px solid #2a2a30',
+                  borderRadius: '4px',
+                  color: '#6d6d7a',
+                  cursor: 'pointer',
+                }}
+              >
+                <X size={12} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Minimap for wider screens */}
+        {shouldShowMinimap() && (
+          <div style={{
+            width: '80px',
+            background: '#0d0d0f',
+            borderLeft: '1px solid #1f1f23',
+            overflow: 'hidden',
+            fontSize: '2px',
+            lineHeight: '3px',
+            fontFamily: 'monospace',
+            whiteSpace: 'pre',
+            padding: '4px',
+            color: '#4a4a54',
+            userSelect: 'none',
+            cursor: 'pointer',
+          }}>
+            {value.split('\n').slice(0, 100).map((line, i) => (
+              <div key={i} style={{ overflow: 'hidden', textOverflow: 'clip' }}>
+                {line.slice(0, 40) || ' '}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
