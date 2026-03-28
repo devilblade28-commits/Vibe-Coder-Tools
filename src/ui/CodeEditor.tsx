@@ -8,13 +8,17 @@
  * - Tab key indentation
  * - Find & Replace panel (Cmd/Ctrl+F)
  * - Debounced onChange (300ms)
+ * - Code folding (fold/unfold code blocks)
+ * - Auto-close brackets
+ * - Symbol toolbar for mobile
+ * - Format code with Prettier
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, dropCursor } from '@codemirror/view'
 import { EditorState, Extension, Prec } from '@codemirror/state'
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
-import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, indentOnInput } from '@codemirror/language'
+import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo } from '@codemirror/commands'
+import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, indentOnInput, foldGutter, foldKeymap, codeFolding } from '@codemirror/language'
 import { javascript } from '@codemirror/lang-javascript'
 import { html, htmlCompletionSource } from '@codemirror/lang-html'
 import { css, cssCompletionSource } from '@codemirror/lang-css'
@@ -22,7 +26,9 @@ import { json } from '@codemirror/lang-json'
 import { markdown } from '@codemirror/lang-markdown'
 import { search, highlightSelectionMatches, openSearchPanel, findNext, findPrevious, replaceNext, replaceAll, closeSearchPanel, SearchQuery } from '@codemirror/search'
 import { autocompletion, completeFromList, Completion, CompletionContext } from '@codemirror/autocomplete'
-import { X, ChevronUp, ChevronDown, Replace } from 'lucide-react'
+import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
+import { X, ChevronUp, ChevronDown, Replace, Sparkles } from 'lucide-react'
+import { formatCode, getParserForFile } from '../utils/prettier'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -31,7 +37,18 @@ interface CodeEditorProps {
   filename: string
   onChange: (content: string) => void
   onSave?: () => void
+  showSymbolToolbar?: boolean
 }
+
+// Symbol groups for quick insert (mobile-friendly)
+const SYMBOL_GROUPS = [
+  { label: 'Brackets', symbols: ['()', '{}', '[]'] },
+  { label: 'Quotes', symbols: ['""', "''", '``'] },
+  { label: 'Tags', symbols: ['<>', '</>', '/>'] },
+  { label: 'JS', symbols: ['=>', '===', '!==', '&&', '||', '?.', '?.'] },
+  { label: 'CSS', symbols: ['#', '.', ':', ';', '{ }', '@media'] },
+  { label: 'HTML', symbols: ['<div>', '<span>', '<p>', '<a>', '<img>', '<input>'] },
+]
 
 interface SearchState {
   query: string
@@ -483,16 +500,20 @@ function getLanguageExtension(filename: string): Extension[] {
 
 // ─── Main Component ─────────────────────────────────────────────────────────
 
-export function CodeEditor({ value, filename, onChange, onSave }: CodeEditorProps) {
+export function CodeEditor({ value, filename, onChange, onSave, showSymbolToolbar = true }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [showSearch, setShowSearch] = useState(false)
+  const [isFormatting, setIsFormatting] = useState(false)
+  const [canUndo, setCanUndo] = useState(false)
+  const [canRedo, setCanRedo] = useState(false)
   const [searchState, setSearchState] = useState<SearchState>({
     query: '',
     replace: '',
     matchCount: 0,
   })
+  const parser = getParserForFile(filename)
 
   // Debounced onChange (300ms)
   const debouncedOnChange = useCallback((content: string) => {
@@ -544,6 +565,18 @@ export function CodeEditor({ value, filename, onChange, onSave }: CodeEditorProp
       },
     }]))
 
+    // Update undo/redo state
+    const updateUndoRedoState = EditorView.updateListener.of((update) => {
+      if (update.transactions.some(t => t.docChanged)) {
+        // Check if undo/redo is available
+        const historyState = update.state.field(history.field as any, false)
+        if (historyState) {
+          setCanUndo(historyState.done.length > 0)
+          setCanRedo(historyState.undone.length > 0)
+        }
+      }
+    })
+
     const extensions: Extension[] = [
       lineNumbers(),
       highlightActiveLine(),
@@ -553,16 +586,32 @@ export function CodeEditor({ value, filename, onChange, onSave }: CodeEditorProp
       drawSelection(),
       indentOnInput(),
       bracketMatching(),
+      closeBrackets(),
       highlightSelectionMatches(),
+      codeFolding(),
+      foldGutter({
+        openText: '▾',
+        closedText: '▸',
+        markerDOM: (open) => {
+          const span = document.createElement('span')
+          span.textContent = open ? '▾' : '▸'
+          span.style.cursor = 'pointer'
+          span.style.opacity = '0.5'
+          return span
+        }
+      }),
       syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
       keymap.of([
         ...defaultKeymap,
         ...historyKeymap,
+        ...closeBracketsKeymap,
+        ...foldKeymap,
         indentWithTab,
       ]),
       search({ top: false }),
       darkTheme,
       updateListener,
+      updateUndoRedoState,
       saveKeymap,
       searchKeymapHandler,
       escapeKeymap,
@@ -654,8 +703,264 @@ export function CodeEditor({ value, filename, onChange, onSave }: CodeEditorProp
     }
   }, [])
 
+  // Handle format with Prettier
+  const handleFormat = useCallback(async () => {
+    if (isFormatting || !parser) return
+    
+    setIsFormatting(true)
+    try {
+      const formatted = await formatCode(value, filename)
+      if (formatted !== value) {
+        onChange(formatted)
+      }
+    } finally {
+      setIsFormatting(false)
+    }
+  }, [value, filename, parser, isFormatting, onChange])
+
+  // Handle undo/redo
+  const handleUndo = useCallback(() => {
+    const view = viewRef.current
+    if (!view) return
+    undo(view)
+  }, [])
+
+  const handleRedo = useCallback(() => {
+    const view = viewRef.current
+    if (!view) return
+    redo(view)
+  }, [])
+
+  // Insert symbol at cursor position
+  const handleInsertSymbol = useCallback((symbol: string) => {
+    const view = viewRef.current
+    if (!view) return
+    
+    // Handle paired symbols (cursor goes in middle)
+    const paired: Record<string, string> = {
+      '()': '()',
+      '{}': '{}',
+      '[]': '[]',
+      '""': '""',
+      "''": "''",
+      '``': '``',
+      '<>': '<>',
+    }
+    
+    const isPaired = paired[symbol]
+    
+    if (isPaired) {
+      // Insert both characters and place cursor in middle
+      const { from, to } = view.state.selection.main
+      view.dispatch({
+        changes: { from, to, insert: symbol },
+        selection: { anchor: from + symbol.length / 2 }
+      })
+    } else {
+      // Insert single symbol
+      const { from, to } = view.state.selection.main
+      view.dispatch({
+        changes: { from, to, insert: symbol },
+        selection: { anchor: from + symbol.length }
+      })
+    }
+    view.focus()
+  }, [])
+
+  // Check if symbol toolbar should be shown (only for web files)
+  const showSymbols = showSymbolToolbar && parser && ['html', 'css', 'javascript', 'typescript'].includes(parser)
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
+      {/* Symbol Toolbar - Mobile friendly quick insert */}
+      {showSymbols && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '4px',
+          padding: '6px 8px',
+          background: '#0d0d0f',
+          borderBottom: '1px solid #1f1f23',
+          overflowX: 'auto',
+          scrollbarWidth: 'none',
+          flexShrink: 0,
+        }}>
+          {SYMBOL_GROUPS.map((group) => (
+            <div key={group.label} style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+              <span style={{
+                fontSize: '9px',
+                color: '#4a4a54',
+                padding: '0 4px',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+              }}>
+                {group.label}
+              </span>
+              {group.symbols.map((symbol) => (
+                <button
+                  key={symbol}
+                  onClick={() => handleInsertSymbol(symbol)}
+                  title={`Insert ${symbol}`}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    minWidth: '28px',
+                    height: '26px',
+                    padding: '0 6px',
+                    background: '#1c1c1f',
+                    border: '1px solid #2a2a30',
+                    borderRadius: '4px',
+                    color: '#8b8b96',
+                    fontSize: '11px',
+                    fontFamily: "'Geist Mono', monospace",
+                    cursor: 'pointer',
+                    WebkitTapHighlightColor: 'transparent',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {symbol}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+      
+      {/* Editor Toolbar - Format, Undo/Redo */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        padding: '6px 10px',
+        background: '#141416',
+        borderBottom: '1px solid #1f1f23',
+        flexShrink: 0,
+      }}>
+        {/* Undo/Redo buttons */}
+        <button
+          onClick={handleUndo}
+          disabled={!canUndo}
+          title="Undo (Cmd/Ctrl+Z)"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '28px',
+            height: '28px',
+            padding: 0,
+            background: 'transparent',
+            border: '1px solid #2a2a30',
+            borderRadius: '6px',
+            color: canUndo ? '#8b8b96' : '#3d3d45',
+            cursor: canUndo ? 'pointer' : 'not-allowed',
+            opacity: canUndo ? 1 : 0.5,
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 7v6h6" />
+            <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13" />
+          </svg>
+        </button>
+        <button
+          onClick={handleRedo}
+          disabled={!canRedo}
+          title="Redo (Cmd/Ctrl+Shift+Z)"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '28px',
+            height: '28px',
+            padding: 0,
+            background: 'transparent',
+            border: '1px solid #2a2a30',
+            borderRadius: '6px',
+            color: canRedo ? '#8b8b96' : '#3d3d45',
+            cursor: canRedo ? 'pointer' : 'not-allowed',
+            opacity: canRedo ? 1 : 0.5,
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 7v6h-6" />
+            <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7" />
+          </svg>
+        </button>
+        
+        <div style={{ width: '1px', height: '20px', background: '#2a2a30', margin: '0 4px' }} />
+        
+        {/* Find/Replace toggle */}
+        <button
+          onClick={() => setShowSearch(!showSearch)}
+          title="Find & Replace (Cmd/Ctrl+F)"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: '28px',
+            padding: '0 10px',
+            background: showSearch ? 'rgba(168, 85, 247, 0.15)' : 'transparent',
+            border: '1px solid #2a2a30',
+            borderRadius: '6px',
+            color: showSearch ? '#a855f7' : '#8b8b96',
+            fontSize: '11px',
+            fontWeight: 500,
+            cursor: 'pointer',
+            gap: '4px',
+          }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="11" cy="11" r="8" />
+            <path d="m21 21-4.3-4.3" />
+          </svg>
+          Find
+        </button>
+        
+        {/* Format button - only show for supported files */}
+        {parser && (
+          <button
+            onClick={handleFormat}
+            disabled={isFormatting}
+            title="Format code with Prettier"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '4px',
+              height: '28px',
+              padding: '0 10px',
+              background: 'transparent',
+              border: '1px solid #2a2a30',
+              borderRadius: '6px',
+              color: isFormatting ? '#4a4a54' : '#8b8b96',
+              fontSize: '11px',
+              fontWeight: 500,
+              cursor: isFormatting ? 'not-allowed' : 'pointer',
+              opacity: isFormatting ? 0.6 : 1,
+            }}
+          >
+            {isFormatting ? (
+              <>
+                <div style={{
+                  width: '10px',
+                  height: '10px',
+                  border: '1.5px solid #4a4a54',
+                  borderTopColor: '#a855f7',
+                  borderRadius: '50%',
+                  animation: 'spin 0.8s linear infinite',
+                }} />
+                Formatting…
+              </>
+            ) : (
+              <>
+                <Sparkles size={12} />
+                Format
+              </>
+            )}
+          </button>
+        )}
+      </div>
+      
       {/* Search Panel */}
       {showSearch && (
         <div style={{
