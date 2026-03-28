@@ -7,11 +7,6 @@ import type { ProjectFile, ProjectFolder, ProjectAsset, FileSystemUIState } from
 import { getFileExtension } from '../workspace/projectService'
 import { CodeEditor } from './CodeEditor'
 import { SymbolToolbar } from './SymbolToolbar'
-import { AcodeHeader } from './AcodeHeader'
-import { AcodeTabBar } from './AcodeTabBar'
-import { AcodeStatusBar } from './AcodeStatusBar'
-import { AcodeToolbar } from './AcodeToolbar'
-import { FileSidebar } from './FileSidebar'
 
 // Helper function to get language from filename
 function getLanguageFromFilename(filename: string): string {
@@ -90,21 +85,12 @@ interface FilesScreenProps {
   onOpenImport: () => void
   onRenameFile: (fileId: string, newName: string) => Promise<void>
   onCloseTab: (fileId: string) => void
-  // New props for Acode layout
-  projectName?: string
-  onOpenChat?: () => void
-  onOpenPreview?: () => void
-  onOpenSettings?: () => void
 }
 
 export function FilesScreen({
   files, folders, assets, activeFileId, uiState, onUiStateChange,
   onSelectFile, onCreateFile, onDeleteFile, onUpdateContent, onOpenImport,
   onRenameFile, onCloseTab,
-  projectName = 'PROJECT',
-  onOpenChat,
-  onOpenPreview,
-  onOpenSettings,
 }: FilesScreenProps) {
   const { view, expandedFolderIds, isCreatingFile, openFileIds } = uiState
   const [newFileName, setNewFileName] = useState('')
@@ -112,12 +98,6 @@ export function FilesScreen({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [renamingFileId, setRenamingFileId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
-
-  // Acode sidebar state
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
-  // Cursor position for status bar
-  const [cursorLine, setCursorLine] = useState(1)
-  const [cursorCol, setCursorCol] = useState(1)
 
   const activeFile = files.find((f) => f.id === activeFileId) ?? null
   
@@ -182,113 +162,371 @@ export function FilesScreen({
     setRenameValue('')
   }
 
-  // ── Toolbar keyboard actions ──────────────────────────────────────────────
+  // ── Tree view ─────────────────────────────────────────────────────────────
 
-  const dispatchKey = (key: string) => {
-    const el = document.querySelector('.cm-content') as HTMLElement | null
-    if (el) {
-      el.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
-    }
+  if (view === 'tree') {
+    const rootFiles = files.filter((f) => f.folderId === null)
+    const folderFiles = (fid: string) => files.filter((f) => f.folderId === fid)
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        {/* Panel header — always visible */}
+        <div style={{
+          height: '48px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '0 12px',
+          borderBottom: '1px solid #1f1f23',
+          flexShrink: 0,
+          gap: '8px',
+        }}>
+          <span style={{ fontSize: '12px', fontWeight: 600, color: '#6d6d7a', textTransform: 'uppercase', letterSpacing: '0.08em', flex: 1 }}>
+            Files {files.length > 0 && <span style={{ color: '#4a4a54', fontWeight: 400 }}>({files.length})</span>}
+          </span>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <button
+              onClick={onOpenImport}
+              title="Import files"
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                width: '32px', height: '32px',
+                background: '#1c1c1f', border: '1px solid #2a2a30',
+                borderRadius: '7px', color: '#6d6d7a',
+                WebkitTapHighlightColor: 'transparent',
+              }}
+            >
+              <Upload size={13} />
+            </button>
+            <button
+              onClick={showCreate}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '5px',
+                height: '32px', padding: '0 10px',
+                background: '#1c1c1f', border: '1px solid #2a2a30',
+                borderRadius: '7px', color: '#a855f7',
+                fontSize: '12px', fontWeight: 600,
+                WebkitTapHighlightColor: 'transparent',
+              }}
+            >
+              <FilePlus size={13} />
+              New file
+            </button>
+          </div>
+        </div>
+
+        {/* New file input */}
+        {isCreatingFile && (
+          <div style={{ padding: '8px 12px', borderBottom: '1px solid #1f1f23', display: 'flex', gap: '6px', flexShrink: 0 }}>
+            <input
+              autoFocus
+              value={newFileName}
+              onChange={(e) => setNewFileName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleCreateFile()
+                if (e.key === 'Escape') hideCreate()
+              }}
+              placeholder="index.html"
+              style={{
+                flex: 1,
+                background: '#1c1c1f',
+                border: '1px solid #a855f7',
+                borderRadius: '7px',
+                padding: '8px 10px',
+                color: '#f0f0f2',
+                fontSize: '13px',
+                outline: 'none',
+                fontFamily: "'Geist Mono', monospace",
+              }}
+            />
+            <button onClick={handleCreateFile} style={{ padding: '0 12px', height: '38px', background: '#a855f7', borderRadius: '7px', color: 'white', fontSize: '13px', fontWeight: 600, flexShrink: 0 }}>
+              Create
+            </button>
+            <button onClick={hideCreate} style={{ width: '38px', height: '38px', background: '#1c1c1f', border: '1px solid #2a2a30', borderRadius: '7px', color: '#6d6d7a', fontSize: '16px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* File list */}
+        <div
+          style={{ flex: 1, overflowY: 'auto' }}
+          onClick={() => { setShowMenuFor(null); setConfirmDeleteId(null) }}
+        >
+          {/* Folders */}
+          {folders.filter((f) => !f.parentId).map((folder) => {
+            const isExpanded = expandedFolderIds.includes(folder.id)
+            const fFiles = folderFiles(folder.id)
+            return (
+              <div key={folder.id}>
+                <button
+                  onClick={(e) => { e.stopPropagation(); toggleFolder(folder.id) }}
+                  style={{
+                    width: '100%', height: '44px', display: 'flex', alignItems: 'center',
+                    padding: '0 12px', gap: '8px', WebkitTapHighlightColor: 'transparent',
+                  }}
+                >
+                  {isExpanded
+                    ? <ChevronDown size={14} style={{ color: '#6d6d7a', flexShrink: 0 }} />
+                    : <ChevronRight size={14} style={{ color: '#6d6d7a', flexShrink: 0 }} />}
+                  <Folder size={15} style={{ color: '#f59e0b', flexShrink: 0 }} />
+                  <span style={{ fontSize: '13px', color: '#a1a1aa', flex: 1, textAlign: 'left' }}>{folder.name}</span>
+                </button>
+                {isExpanded && fFiles.map((file) => (
+                  <FileRow
+                    key={file.id}
+                    file={file}
+                    isActive={file.id === activeFileId}
+                    indent
+                    showMenu={showMenuFor === file.id}
+                    confirmDelete={confirmDeleteId === file.id}
+                    isRenaming={renamingFileId === file.id}
+                    renameValue={renameValue}
+                    onOpen={() => { onSelectFile(file); setView('editor') }}
+                    onMenuToggle={(e) => { e.stopPropagation(); setShowMenuFor(showMenuFor === file.id ? null : file.id) }}
+                    onDeleteRequest={() => setConfirmDeleteId(file.id)}
+                    onDeleteConfirm={() => handleDeleteConfirm(file)}
+                    onDeleteCancel={() => setConfirmDeleteId(null)}
+                    onRenameStart={() => handleRenameStart(file.id)}
+                    onRenameChange={setRenameValue}
+                    onRenameCommit={handleRenameCommit}
+                    onRenameCancel={handleRenameCancel}
+                  />
+                ))}
+              </div>
+            )
+          })}
+
+          {/* Root files */}
+          {rootFiles.map((file) => (
+            <FileRow
+              key={file.id}
+              file={file}
+              isActive={file.id === activeFileId}
+              showMenu={showMenuFor === file.id}
+              confirmDelete={confirmDeleteId === file.id}
+              isRenaming={renamingFileId === file.id}
+              renameValue={renameValue}
+              onOpen={() => { onSelectFile(file); setView('editor') }}
+              onMenuToggle={(e) => { e.stopPropagation(); setShowMenuFor(showMenuFor === file.id ? null : file.id) }}
+              onDeleteRequest={() => setConfirmDeleteId(file.id)}
+              onDeleteConfirm={() => handleDeleteConfirm(file)}
+              onDeleteCancel={() => setConfirmDeleteId(null)}
+              onRenameStart={() => handleRenameStart(file.id)}
+              onRenameChange={setRenameValue}
+              onRenameCommit={handleRenameCommit}
+              onRenameCancel={handleRenameCancel}
+            />
+          ))}
+
+          {/* Assets section */}
+          {assets.length > 0 && (
+            <div>
+              <div style={{
+                height: '36px', display: 'flex', alignItems: 'center',
+                padding: '0 12px', gap: '6px',
+                borderTop: files.length > 0 ? '1px solid #1f1f23' : 'none',
+              }}>
+                <Image size={13} style={{ color: '#ab47bc', flexShrink: 0 }} />
+                <span style={{ fontSize: '11px', fontWeight: 600, color: '#4a4a54', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                  Assets ({assets.length})
+                </span>
+              </div>
+              {assets.map((asset) => (
+                <div key={asset.id} style={{
+                  height: '40px', display: 'flex', alignItems: 'center',
+                  padding: '0 12px 0 24px', gap: '8px',
+                }}>
+                  <Image size={14} style={{ color: '#ab47bc', flexShrink: 0 }} />
+                  <span style={{ fontSize: '12px', color: '#6d6d7a', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                    {asset.fileName}
+                  </span>
+                  <span style={{ fontSize: '10px', color: '#3d3d45', flexShrink: 0 }}>
+                    {(asset.size / 1024).toFixed(1)}KB
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Empty state */}
+          {files.length === 0 && assets.length === 0 && !isCreatingFile && (
+            <div style={{ padding: '48px 24px', textAlign: 'center' }}>
+              <div style={{ fontSize: '32px', marginBottom: '12px', opacity: 0.3 }}>📂</div>
+              <p style={{ fontSize: '14px', color: '#4a4a54', margin: '0 0 4px', fontWeight: 500 }}>No files yet</p>
+              <p style={{ fontSize: '12px', color: '#3d3d45', margin: 0, lineHeight: 1.5 }}>
+                Create a file manually or ask AI to build something.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    )
   }
+
+  // ── Editor view ───────────────────────────────────────────────────────────
 
   // Get open files for tabs
   const openFiles = openFileIds.map(id => files.find(f => f.id === id)).filter(Boolean) as ProjectFile[]
 
-  // ── File sidebar (replaces tree view) + editor view ───────────────────────
-
-  // If no files and not in editor view, we still show the editor layout
-  // Tree view is now replaced by FileSidebar overlay
-
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
-      {/* ── File Sidebar Overlay ────────────────────────────────────────── */}
-      <FileSidebar
-        isOpen={isSidebarOpen}
-        files={files}
-        folders={folders}
-        activeFileId={activeFileId}
-        projectName={projectName}
-        onSelectFile={(file) => {
-          onSelectFile(file)
-          onUiStateChange({ ...uiState, view: 'editor', openFileIds: openFileIds.includes(file.id) ? openFileIds : [...openFileIds.slice(-4), file.id] })
-          setIsSidebarOpen(false)
-        }}
-        onClose={() => setIsSidebarOpen(false)}
-        onCreateFile={() => {
-          setIsSidebarOpen(false)
-          showCreate()
-        }}
-        onOpenChat={() => { setIsSidebarOpen(false); onOpenChat?.() }}
-        onOpenPreview={() => { setIsSidebarOpen(false); onOpenPreview?.() }}
-        onOpenSettings={() => { setIsSidebarOpen(false); onOpenSettings?.() }}
-      />
-
-      {/* ── Acode Header ───────────────────────────────────────────────── */}
-      <AcodeHeader
-        activeFile={activeFile}
-        onHamburgerClick={() => setIsSidebarOpen(true)}
-        onSearchClick={() => {
-          // trigger CodeMirror Cmd+F
-          const ev = new KeyboardEvent('keydown', { key: 'f', metaKey: true, ctrlKey: true, bubbles: true, cancelable: true })
-          document.querySelector('.cm-content')?.dispatchEvent(ev)
-        }}
-        onPlayClick={() => onOpenPreview?.()}
-        onMoreClick={() => {}}
-      />
-
-      {/* ── Acode Tab Bar ──────────────────────────────────────────────── */}
-      <AcodeTabBar
-        openFiles={openFiles}
-        activeFileId={activeFileId}
-        onSelectFile={onSelectFile}
-        onCloseTab={onCloseTab}
-      />
-
-      {/* ── New file input (floating below tab bar when creating) ──────── */}
-      {isCreatingFile && (
-        <div style={{ padding: '8px 12px', borderBottom: '1px solid #1f1f23', display: 'flex', gap: '6px', flexShrink: 0, background: '#0d0d0f', zIndex: 10 }}>
-          <input
-            autoFocus
-            value={newFileName}
-            onChange={(e) => setNewFileName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleCreateFile()
-              if (e.key === 'Escape') hideCreate()
-            }}
-            placeholder="index.html"
-            style={{
-              flex: 1,
-              background: '#1c1c1f',
-              border: '1px solid #a855f7',
-              borderRadius: '7px',
-              padding: '8px 10px',
-              color: '#f0f0f2',
-              fontSize: '13px',
-              outline: 'none',
-              fontFamily: "'Geist Mono', monospace",
-            }}
-          />
-          <button onClick={handleCreateFile} style={{ padding: '0 12px', height: '38px', background: '#a855f7', borderRadius: '7px', color: 'white', fontSize: '13px', fontWeight: 600, flexShrink: 0 }}>
-            Buat
-          </button>
-          <button onClick={hideCreate} style={{ width: '38px', height: '38px', background: '#1c1c1f', border: '1px solid #2a2a30', borderRadius: '7px', color: '#6d6d7a', fontSize: '16px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <X size={14} />
-          </button>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* Tab bar - show when multiple files are open */}
+      {openFiles.length > 1 && (
+        <div style={{
+          display: 'flex',
+          overflowX: 'auto',
+          scrollbarWidth: 'none',
+          background: '#0d0d0f',
+          borderBottom: '1px solid #1f1f23',
+          flexShrink: 0,
+        }}>
+          {openFiles.map(tabFile => {
+            const isActive = tabFile.id === activeFileId
+            return (
+              <div
+                key={tabFile.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '0 12px',
+                  height: '36px',
+                  minWidth: '80px',
+                  maxWidth: '140px',
+                  flexShrink: 0,
+                  background: isActive ? '#141416' : 'transparent',
+                  borderRight: '1px solid #1f1f23',
+                  borderBottom: isActive ? '2px solid #a855f7' : '2px solid transparent',
+                  cursor: 'pointer',
+                }}
+                onClick={() => onSelectFile(tabFile)}
+              >
+                <FileTypeIcon name={tabFile.name} />
+                <span style={{
+                  fontSize: '12px',
+                  color: isActive ? '#f0f0f2' : '#6d6d7a',
+                  fontFamily: 'monospace',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  flex: 1,
+                }}>
+                  {tabFile.name}
+                </span>
+                <button
+                  onClick={(e) => { e.stopPropagation();e.preventDefault(); onCloseTab(tabFile.id) }}
+                  style={{
+                    width: '16px',
+                    height: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderRadius: '3px',
+                    color: '#4a4a54',
+                    fontSize: '10px',
+                    flexShrink: 0,
+                    background: 'transparent',
+                  }}
+                >
+                  <X size={10} />
+                </button>
+              </div>
+            )
+          })}
         </div>
       )}
 
-      {/* ── Split view file selector ────────────────────────────────────── */}
+      {/* Editor header */}
+      <div style={{
+        height: '48px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        padding: '0 6px 0 10px',
+        borderBottom: '1px solid #1f1f23',
+        background: '#141416',
+        flexShrink: 0,
+      }}>
+        <button
+          onClick={() => setView('tree')}
+          style={{
+            width: '40px', height: '40px',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            borderRadius: '8px', color: '#8b8b96',
+            WebkitTapHighlightColor: 'transparent',
+          }}
+        >
+          <ChevronLeft size={20} />
+        </button>
+        {activeFile ? (
+          <>
+            <FileTypeIcon name={activeFile.name} />
+            {/* Breadcrumb path */}
+            <div style={{
+              flex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              overflow: 'hidden',
+              minWidth: 0,
+            }}>
+              {buildBreadcrumb(activeFile, folders).map((part, i, arr) => (
+                <React.Fragment key={i}>
+                  <span style={{
+                    fontSize: '13px',
+                    fontWeight: i === arr.length - 1 ? 500 : 400,
+                    color: i === arr.length - 1 ? '#f0f0f2' : '#6d6d7a',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}>
+                    {part}
+                  </span>
+                  {i < arr.length - 1 && (
+                    <ChevronRight size={12} style={{ color: '#4a4a54', flexShrink: 0 }} />
+                  )}
+                </React.Fragment>
+              ))}
+            </div>
+            <span style={{ fontSize: '11px', color: '#3d3d45', flexShrink: 0, paddingRight: '4px' }}>
+              {activeFile.type === 'text' ? `${(activeFile.size / 1024).toFixed(1)} KB` : activeFile.mimeType}
+            </span>
+          </>
+        ) : (
+          <span style={{ flex: 1, fontSize: '13px', color: '#6d6d7a' }}>No file selected</span>
+        )}
+        {/* Split view toggle */}
+        {activeFile && activeFile.type === 'text' && (
+          <button
+            onClick={() => setIsSplitView(!isSplitView)}
+            title={isSplitView ? 'Close split view' : 'Open split view'}
+            style={{
+              width: '32px', height: '32px',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              borderRadius: '6px', color: isSplitView ? '#a855f7' : '#6d6d7a',
+              background: isSplitView ? 'rgba(168, 85, 247, 0.15)' : 'transparent',
+              border: '1px solid #2a2a30',
+              WebkitTapHighlightColor: 'transparent',
+            }}
+          >
+            <Columns size={14} />
+          </button>
+        )}
+      </div>
+
+      {/* Split view file selector */}
       {isSplitView && activeFile && (
         <div style={{
           display: 'flex',
           alignItems: 'center',
           gap: '8px',
-          padding: '6px 12px',
+          padding: '8px 12px',
           background: '#0d0d0f',
           borderBottom: '1px solid #1f1f23',
           flexShrink: 0,
         }}>
-          <span style={{ fontSize: '11px', color: '#4a4a54' }}>Split dengan:</span>
+          <span style={{ fontSize: '11px', color: '#4a4a54' }}>Split with:</span>
           <select
             value={splitViewFileId ?? ''}
             onChange={(e) => setSplitViewFileId(e.target.value || null)}
@@ -297,13 +535,13 @@ export function FilesScreen({
               background: '#1c1c1f',
               border: '1px solid #2a2a30',
               borderRadius: '6px',
-              padding: '5px 10px',
+              padding: '6px 10px',
               color: '#f0f0f2',
               fontSize: '12px',
               outline: 'none',
             }}
           >
-            <option value="">Pilih file...</option>
+            <option value="">Select file...</option>
             {files.filter(f => f.type === 'text' && f.id !== activeFile.id).map(f => (
               <option key={f.id} value={f.id}>{f.name}</option>
             ))}
@@ -311,25 +549,26 @@ export function FilesScreen({
           {splitFile && (
             <button
               onClick={() => setSplitViewFileId(null)}
-              style={{ padding: '4px 8px', background: '#1c1c1f', border: '1px solid #2a2a30', borderRadius: '4px', color: '#6d6d7a', fontSize: '11px' }}
+              style={{
+                padding: '4px 8px',
+                background: '#1c1c1f',
+                border: '1px solid #2a2a30',
+                borderRadius: '4px',
+                color: '#6d6d7a',
+                fontSize: '11px',
+              }}
             >
               Clear
             </button>
           )}
-          <button
-            onClick={() => setIsSplitView(false)}
-            title="Close split view"
-            style={{ width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '6px', color: '#6d6d7a', background: 'transparent', border: '1px solid #2a2a30' }}
-          >
-            <X size={12} />
-          </button>
         </div>
       )}
 
-      {/* ── Editor Body ────────────────────────────────────────────────── */}
+      {/* Editor body */}
       {activeFile ? (
         activeFile.type === 'text' ? (
           isSplitView && splitFile ? (
+            /* Split view with two editors */
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
               <div style={{ flex: 1, overflow: 'hidden', borderBottom: '1px solid #1f1f23' }}>
                 <CodeEditor
@@ -337,7 +576,6 @@ export function FilesScreen({
                   value={activeFile.content}
                   filename={activeFile.name}
                   onChange={(content) => onUpdateContent(activeFile.id, content)}
-                  onCursorChange={(ln, col) => { setCursorLine(ln); setCursorCol(col) }}
                 />
               </div>
               <div style={{ flex: 1, overflow: 'hidden' }}>
@@ -350,38 +588,12 @@ export function FilesScreen({
               </div>
             </div>
           ) : (
-            <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
-              <CodeEditor
-                key={activeFile.id}
-                value={activeFile.content}
-                filename={activeFile.name}
-                onChange={(content) => onUpdateContent(activeFile.id, content)}
-                onCursorChange={(ln, col) => { setCursorLine(ln); setCursorCol(col) }}
-                showSymbolToolbar={false}
-              />
-              {/* Split view toggle — small button overlaying editor top-right */}
-              <button
-                onClick={() => setIsSplitView(true)}
-                title="Split view"
-                style={{
-                  position: 'absolute',
-                  top: '8px',
-                  right: '8px',
-                  width: '28px',
-                  height: '28px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderRadius: '6px',
-                  color: '#4a4a54',
-                  background: 'rgba(13,13,15,0.8)',
-                  border: '1px solid #2a2a30',
-                  zIndex: 5,
-                }}
-              >
-                <Columns size={12} />
-              </button>
-            </div>
+            <CodeEditor
+              key={activeFile.id}
+              value={activeFile.content}
+              filename={activeFile.name}
+              onChange={(content) => onUpdateContent(activeFile.id, content)}
+            />
           )
         ) : (
           <div style={{
@@ -402,7 +614,6 @@ export function FilesScreen({
           </div>
         )
       ) : (
-        /* Empty state — no file selected */
         <div style={{
           flex: 1,
           display: 'flex',
@@ -414,10 +625,10 @@ export function FilesScreen({
           padding: '32px',
           textAlign: 'center',
         }}>
-          <div style={{ fontSize: '40px', opacity: 0.2 }}>📄</div>
-          <p style={{ fontSize: '14px', margin: 0 }}>Pilih file untuk diedit</p>
+          <FileText size={32} style={{ color: '#3d3d45' }} />
+          <p style={{ fontSize: '14px', margin: 0 }}>Select a file to edit</p>
           <button
-            onClick={() => setIsSidebarOpen(true)}
+            onClick={() => setView('tree')}
             style={{
               padding: '8px 16px',
               background: '#1c1c1f',
@@ -427,27 +638,10 @@ export function FilesScreen({
               fontSize: '13px',
             }}
           >
-            Lihat file
+            Browse files
           </button>
         </div>
       )}
-
-      {/* ── Acode Status Bar ───────────────────────────────────────────── */}
-      <AcodeStatusBar
-        line={cursorLine}
-        col={cursorCol}
-        language={activeFile?.name ?? ''}
-      />
-
-      {/* ── Acode Toolbar ──────────────────────────────────────────────── */}
-      <AcodeToolbar
-        onTabIndent={() => dispatchKey('Tab')}
-        onArrowUp={() => dispatchKey('ArrowUp')}
-        onArrowDown={() => dispatchKey('ArrowDown')}
-        onArrowLeft={() => dispatchKey('ArrowLeft')}
-        onArrowRight={() => dispatchKey('ArrowRight')}
-        onAIClick={() => onOpenChat?.()}
-      />
     </div>
   )
 }
@@ -606,7 +800,7 @@ function FileRow({
               WebkitTapHighlightColor: 'transparent',
             }}
           >
-            Hapus file
+            Delete file
           </button>
         </div>
       )}
@@ -630,19 +824,19 @@ function FileRow({
         }}
           onClick={(e) => e.stopPropagation()}
         >
-          <p style={{ fontSize: '12px', color: '#f0f0f2', margin: 0 }}>Hapus <strong>{file.name}</strong>?</p>
+          <p style={{ fontSize: '12px', color: '#f0f0f2', margin: 0 }}>Delete <strong>{file.name}</strong>?</p>
           <div style={{ display: 'flex', gap: '6px' }}>
             <button
               onClick={onDeleteConfirm}
               style={{ flex: 1, height: '32px', background: '#ef4444', borderRadius: '6px', color: 'white', fontSize: '12px', fontWeight: 600 }}
             >
-              Hapus
+              Delete
             </button>
             <button
               onClick={onDeleteCancel}
               style={{ flex: 1, height: '32px', background: '#1c1c1f', border: '1px solid #3d3d45', borderRadius: '6px', color: '#8b8b96', fontSize: '12px' }}
             >
-              Batal
+              Cancel
             </button>
           </div>
         </div>
