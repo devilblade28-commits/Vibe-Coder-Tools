@@ -9,13 +9,17 @@
  * 5. Replace asset filename references with base64 data URLs or blob object URLs
  */
 
-import type { ProjectFile, ProjectAsset } from '../types'
+import type { ProjectFile, ProjectAsset } from '../filesystem/filesystemTypes'
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface PreviewBuildResult {
   html: string
   hasHtml: boolean
   error?: string
 }
+
+// ─── Object URL Management ───────────────────────────────────────────────────
 
 /** Object URLs that were allocated in the previous build — must be revoked. */
 let previousObjectUrls: string[] = []

@@ -14,8 +14,7 @@
  *   buildDisplayText()          → strips JSON from user-visible output
  */
 
-import type { AIProvider, AIFileAction, CustomProviderConfig } from '../types'
-import type { ChatMessage, AIStructuredResponse } from '../types'
+import type { AIProvider, AIFileAction, CustomProviderConfig, ChatMessage, AIStructuredResponse } from './aiTypes'
 
 // ─── Updated built-in model presets ──────────────────────────────────────────
 

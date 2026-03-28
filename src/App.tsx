@@ -12,8 +12,8 @@ import type {
   AIProvider, FileSystemUIState, AIFileAction, CustomProviderConfig,
 } from './types'
 import * as projectService from './workspace/projectService'
-import * as ls from './storage/ls'
-import * as idb from './storage/idb'
+import * as ls from './storage/localStorageService'
+import * as idb from './storage/indexedDBService'
 import { sendMessage, buildSystemPrompt, PROVIDER_MODELS } from './ai/providers'
 import { executeActions, buildActionSummary } from './ai/executeActions'
 import { v4 as uuid } from 'uuid'

@@ -4,7 +4,8 @@
  * One action failing does NOT stop subsequent actions.
  */
 
-import type { AIFileAction, AIActionType, ValidationResult, ActionExecutionResult, ProjectFile } from '../types'
+import type { AIFileAction, AIActionType, ValidationResult, ActionExecutionResult } from './aiTypes'
+import type { ProjectFile } from '../filesystem/filesystemTypes'
 import * as projectService from '../workspace/projectService'
 
 // ─── Validation ───────────────────────────────────────────────────────────────
@@ -112,7 +113,7 @@ async function executeAction(
       const file = files.find((f) => f.name.toLowerCase() === action.file.toLowerCase())
       if (!file) throw new Error(`File "${action.file}" not found in project`)
       const updated = { ...file, name: action.newName, updatedAt: new Date().toISOString() }
-      await import('../storage/idb').then((idb) => idb.putFile(updated))
+      await import('../storage/indexedDBService').then((idb) => idb.putFile(updated))
       return updated
     }
 

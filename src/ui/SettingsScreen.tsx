@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Eye, EyeOff, AlertTriangle, ChevronRight, Zap } from 'lucide-react'
 import type { AIProvider, CustomProviderConfig } from '../types'
-import type { AISettingsSnapshot } from '../storage/ls'
+import type { AISettingsSnapshot } from '../storage/localStorageService'
 import { PROVIDER_MODELS, API_KEY_LINKS } from '../ai/providers'
 
 interface SettingsScreenProps {
