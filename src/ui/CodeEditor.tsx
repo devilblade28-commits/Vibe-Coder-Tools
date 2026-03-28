@@ -856,6 +856,16 @@ export function CodeEditor({ value, filename, onChange, onSave, showSymbolToolba
 
     viewRef.current = view
 
+    // Expose CodeMirror commands globally for SymbolToolbar
+    if (typeof window !== 'undefined') {
+      window.__CM = {
+        undo: () => undo(view),
+        redo: () => redo(view),
+        cursorLineUp: () => cursorLineUp(view),
+        cursorLineDown: () => cursorLineDown(view),
+      }
+    }
+
     return () => {
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current)
@@ -877,6 +887,59 @@ export function CodeEditor({ value, filename, onChange, onSave, showSymbolToolba
       })
     }
   }, [value])
+
+  // Event listeners for SymbolToolbar custom events
+  useEffect(() => {
+    const handleInsert = (e: Event) => {
+      const sym = (e as CustomEvent).detail as string
+      if (!viewRef.current) return
+      const state = viewRef.current.state
+      const cursor = state.selection.main.head
+      viewRef.current.dispatch({
+        changes: { from: cursor, insert: sym },
+        selection: { anchor: cursor + sym.length },
+      })
+      viewRef.current.focus()
+    }
+
+    const handleMoveUp = () => {
+      if (!viewRef.current) return
+      const CM = (window as any).__CM
+      if (CM?.cursorLineUp) CM.cursorLineUp(viewRef.current)
+    }
+
+    const handleMoveDown = () => {
+      if (!viewRef.current) return
+      const CM = (window as any).__CM
+      if (CM?.cursorLineDown) CM.cursorLineDown(viewRef.current)
+    }
+
+    const handleUndo = () => {
+      if (!viewRef.current) return
+      const CM = (window as any).__CM
+      if (CM?.undo) CM.undo(viewRef.current)
+    }
+
+    const handleRedo = () => {
+      if (!viewRef.current) return
+      const CM = (window as any).__CM
+      if (CM?.redo) CM.redo(viewRef.current)
+    }
+
+    document.addEventListener('cm-insert', handleInsert)
+    document.addEventListener('cm-move-up', handleMoveUp)
+    document.addEventListener('cm-move-down', handleMoveDown)
+    document.addEventListener('cm-undo', handleUndo)
+    document.addEventListener('cm-redo', handleRedo)
+
+    return () => {
+      document.removeEventListener('cm-insert', handleInsert)
+      document.removeEventListener('cm-move-up', handleMoveUp)
+      document.removeEventListener('cm-move-down', handleMoveDown)
+      document.removeEventListener('cm-undo', handleUndo)
+      document.removeEventListener('cm-redo', handleRedo)
+    }
+  }, [])
 
   // Search panel handlers
   const handleFindNext = useCallback(() => {

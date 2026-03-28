@@ -6,6 +6,18 @@ import {
 import type { ProjectFile, ProjectFolder, ProjectAsset, FileSystemUIState } from '../types'
 import { getFileExtension } from '../workspace/projectService'
 import { CodeEditor } from './CodeEditor'
+import { SymbolToolbar } from './SymbolToolbar'
+
+// Helper function to get language from filename
+function getLanguageFromFilename(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase() ?? ''
+  if (['html', 'htm'].includes(ext)) return 'html'
+  if (['css', 'scss', 'less'].includes(ext)) return 'css'
+  if (['js', 'jsx', 'ts', 'tsx'].includes(ext)) return 'javascript'
+  if (['json'].includes(ext)) return 'json'
+  if (['md', 'markdown'].includes(ext)) return 'markdown'
+  return 'text'
+}
 
 // File type colors matching VS Code conventions
 const FILE_COLORS: Record<string, string> = {

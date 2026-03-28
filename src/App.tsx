@@ -51,7 +51,7 @@ export default function App() {
   const [showModelSelector, setShowModelSelector] = useState(false)
   const [previewRefreshTrigger, setPreviewRefreshTrigger] = useState(0)
   const [fsUiState, setFsUiState] = useState<FileSystemUIState>({
-    view: 'tree',
+    view: 'editor',
     expandedFolderIds: [],
     isCreatingFile: false,
     openFileIds: [],
