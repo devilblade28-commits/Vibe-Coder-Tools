@@ -15,7 +15,7 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { blink } from '../blink/client'
+import { useAI } from '../ai/AIContext'
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, dropCursor, ViewPlugin, Decoration, WidgetType } from '@codemirror/view'
 import { EditorState, Extension, Prec, RangeSetBuilder } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo } from '@codemirror/commands'
@@ -30,6 +30,106 @@ import { autocompletion, completeFromList, Completion, CompletionContext } from 
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
 import { X, ChevronUp, ChevronDown, Replace, Sparkles, Check, Loader2 } from 'lucide-react'
 import { formatCode, getParserForFile } from '../utils/prettier'
+
+// ─── AI Autocomplete Helper (direct fetch, no Blink SDK) ─────────────────
+
+async function fetchAICompletion({
+  provider,
+  model,
+  apiKey,
+  endpoint,
+  extraHeaders,
+  lang,
+  before,
+  after,
+}: {
+  provider: string
+  model: string
+  apiKey: string
+  endpoint?: string
+  extraHeaders?: string
+  lang: string
+  before: string
+  after: string
+}): Promise<string | null> {
+  const prompt = `You are a code autocomplete engine. Complete the ${lang} code at the cursor position.
+Return ONLY the completion text — no explanation, no markdown, no code block fences.
+Keep the completion short (max 80 characters, preferably a single line).
+
+Code before cursor:
+${before}
+
+Code after cursor:
+${after}
+
+Completion:`
+
+  try {
+    if (provider === 'gemini') {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.2, maxOutputTokens: 80 },
+        }),
+      })
+      if (!res.ok) return null
+      const data = await res.json()
+      return data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? null
+    }
+
+    if (provider === 'claude') {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 80,
+          messages: [{ role: 'user', content: prompt }],
+        }),
+      })
+      if (!res.ok) return null
+      const data = await res.json()
+      return data?.content?.[0]?.text?.trim() ?? null
+    }
+
+    // openai or custom (OpenAI-compatible)
+    const baseUrl = provider === 'custom'
+      ? (endpoint ?? 'https://api.openai.com/v1').replace(/\/$/, '')
+      : 'https://api.openai.com/v1'
+
+    let extra: Record<string, string> = {}
+    if (provider === 'custom' && extraHeaders?.trim()) {
+      try { extra = JSON.parse(extraHeaders) } catch { /* ignore */ }
+    }
+
+    const res = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        ...extra,
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 80,
+        temperature: 0.2,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    })
+    if (!res.ok) return null
+    const data = await res.json()
+    return data?.choices?.[0]?.message?.content?.trim() ?? null
+  } catch {
+    return null
+  }
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -893,12 +993,26 @@ export function CodeEditor({ value, filename, onChange, onSave, showSymbolToolba
     view.focus()
   }, [])
 
-  // Fetch AI suggestion for inline autocomplete using Blink AI
+  const { settings } = useAI()
+
+  // Fetch AI suggestion for inline autocomplete — direct fetch to user's provider, no Blink SDK
   const fetchSuggestion = useCallback(async (currentCode: string, cursorPosition: number) => {
     // Only fetch for supported file types
-    if (!parser || !['html', 'css', 'javascript', 'typescript'].includes(parser)) {
-      return
-    }
+    if (!parser || !['html', 'css', 'javascript', 'typescript'].includes(parser)) return
+
+    const provider = settings.activeProvider
+    const isCustom = provider === 'custom'
+    const apiKey = isCustom ? settings.customProvider.apiKey : (settings.apiKeys[provider] ?? '')
+
+    // Skip if user has no API key configured
+    if (!apiKey) return
+
+    // Pick a fast/cheap model for autocomplete
+    let model = isCustom ? settings.customProvider.model : settings.activeModel
+    // Override to cheaper model if on openai to save credits
+    if (provider === 'openai' && !isCustom) model = 'gpt-4o-mini'
+    // Use flash for Gemini
+    if (provider === 'gemini' && !isCustom) model = 'gemini-2.0-flash'
 
     // Get context: 300 chars before cursor, 100 after
     const before = currentCode.substring(Math.max(0, cursorPosition - 300), cursorPosition)
@@ -910,27 +1024,20 @@ export function CodeEditor({ value, filename, onChange, onSave, showSymbolToolba
     setIsFetchingSuggestion(true)
 
     try {
-      const { text } = await blink.ai.generateText({
-        prompt: `You are a code autocomplete engine. Complete the ${parser} code at the cursor position.
-Return ONLY the completion text — no explanation, no markdown, no code block fences.
-Keep the completion short (max 80 characters, preferably a single line).
-
-Code before cursor:
-${before}
-
-Code after cursor:
-${after}
-
-Completion:`,
-        model: 'gpt-4.1-mini',
-        maxTokens: 60,
-        temperature: 0.2,
+      const text = await fetchAICompletion({
+        provider,
+        model,
+        apiKey,
+        endpoint: isCustom ? settings.customProvider.endpoint : undefined,
+        extraHeaders: isCustom ? settings.customProvider.extraHeaders : undefined,
+        lang: parser,
+        before,
+        after,
       })
 
-      const completion = text?.trim()
-      if (completion && completion.length > 0 && completion.length < 200) {
+      if (text && text.length > 0 && text.length < 200) {
         // Strip any accidental markdown fences
-        const clean = completion.replace(/^```[\w]*\n?/, '').replace(/\n?```$/, '').trim()
+        const clean = text.replace(/^```[\w]*\n?/, '').replace(/\n?```$/, '').trim()
         if (clean) setSuggestion(clean)
         else setSuggestion(null)
       } else {
@@ -942,7 +1049,7 @@ Completion:`,
     } finally {
       setIsFetchingSuggestion(false)
     }
-  }, [parser])
+  }, [parser, settings])
 
   // Accept suggestion
   const handleAcceptSuggestion = useCallback(() => {
