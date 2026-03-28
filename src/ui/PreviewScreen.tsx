@@ -9,7 +9,7 @@ interface PreviewScreenProps {
   refreshTrigger: number
 }
 
-const DEBOUNCE_MS = 300
+const DEBOUNCE_MS = 1000
 
 export function PreviewScreen({ files, assets, refreshTrigger }: PreviewScreenProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null)

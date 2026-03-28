@@ -47,6 +47,7 @@ export default function App() {
   // ─── Local UI State ───────────────────────────────────────────────────────
   
   const [activeTab, setActiveTab] = useState<TabId>('chat')
+  const [hasVisitedPreview, setHasVisitedPreview] = useState(false)
   const [showImportModal, setShowImportModal] = useState(false)
   const [showModelSelector, setShowModelSelector] = useState(false)
   const [fsUiState, setFsUiState] = useState<FileSystemUIState>({
@@ -308,7 +309,10 @@ export default function App() {
       
       <AppShell
         activeTab={activeTab}
-        onTabChange={setActiveTab}
+        onTabChange={(tab) => {
+          if (tab === 'preview') setHasVisitedPreview(true)
+          setActiveTab(tab)
+        }}
         header={
           <Header
             projectName={project?.name ?? 'Project'}
@@ -356,11 +360,13 @@ export default function App() {
         
         {/* Preview Tab */}
         <div style={{ display: activeTab === 'preview' ? 'flex' : 'none', height: '100%', flexDirection: 'column' }}>
-          <PreviewScreen
-            files={files}
-            assets={assets}
-            refreshTrigger={preview.refreshTrigger}
-          />
+          {hasVisitedPreview && (
+            <PreviewScreen
+              files={files}
+              assets={assets}
+              refreshTrigger={preview.refreshTrigger}
+            />
+          )}
         </div>
         
         {/* Settings Tab */}
@@ -410,7 +416,7 @@ const globalStyles = `
   }
   @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
   * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
-  html, body, #root { margin: 0; padding: 0; height: 100%; background: #0d0d0f; font-family: 'DM Sans', system-ui, sans-serif; }
+  html, body, #root { margin: 0; padding: 0; height: 100%; background: #0d0d0f; font-family: 'Trebuchet MS', 'Segoe UI', system-ui, sans-serif; }
   ::-webkit-scrollbar { width: 4px; height: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: #2a2a30; border-radius: 4px; }

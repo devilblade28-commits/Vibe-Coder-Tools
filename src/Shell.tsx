@@ -10,40 +10,20 @@
  * Customize sidebar width, colors, and nav items — but keep this structure.
  */
 import React from 'react'
-import {
-  AppShell,
-  AppShellSidebar,
-  AppShellMain,
-  MobileSidebarTrigger,
-} from '@blinkdotnew/ui'
 
 interface ShellProps {
-  /** Sidebar content — e.g. <Sidebar><SidebarItem .../></Sidebar> */
+  /** Sidebar content */
   sidebar: React.ReactNode
   /** App name shown in mobile header */
   appName?: string
   children: React.ReactNode
 }
 
-export function Shell({ sidebar, appName = 'App', children }: ShellProps) {
+/** Unused layout component — kept as a standalone stub (no external dependencies). */
+export function Shell({ sidebar: _sidebar, appName: _appName = 'App', children }: ShellProps) {
   return (
-    <AppShell>
-      {/* Sidebar — hidden on mobile, always visible on md+ */}
-      <AppShellSidebar>
-        {sidebar}
-      </AppShellSidebar>
-
-      {/* Main content */}
-      <AppShellMain>
-        {/* Mobile header — hamburger + app name, only shown below md breakpoint */}
-        <div className="md:hidden flex items-center gap-3 px-4 h-14 border-b border-border bg-background sticky top-0 z-30">
-          <MobileSidebarTrigger />
-          <span className="font-semibold text-sm">{appName}</span>
-        </div>
-
-        {/* Page content */}
-        {children}
-      </AppShellMain>
-    </AppShell>
+    <div style={{ display: 'flex', height: '100%' }}>
+      {children}
+    </div>
   )
 }
