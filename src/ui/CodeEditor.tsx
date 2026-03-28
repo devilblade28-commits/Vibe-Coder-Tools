@@ -16,11 +16,12 @@ import { EditorState, Extension, Prec } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, indentOnInput } from '@codemirror/language'
 import { javascript } from '@codemirror/lang-javascript'
-import { html } from '@codemirror/lang-html'
-import { css } from '@codemirror/lang-css'
+import { html, htmlCompletionSource } from '@codemirror/lang-html'
+import { css, cssCompletionSource } from '@codemirror/lang-css'
 import { json } from '@codemirror/lang-json'
 import { markdown } from '@codemirror/lang-markdown'
 import { search, highlightSelectionMatches, openSearchPanel, findNext, findPrevious, replaceNext, replaceAll, closeSearchPanel, SearchQuery } from '@codemirror/search'
+import { autocompletion, completeFromList, Completion, CompletionContext } from '@codemirror/autocomplete'
 import { X, ChevronUp, ChevronDown, Replace } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────
@@ -81,7 +82,341 @@ const darkTheme = EditorView.theme({
   '.cm-searchMatch.selected': {
     backgroundColor: 'rgba(250, 204, 21, 0.5)',
   },
+  // Autocomplete tooltip styling
+  '.cm-tooltip': {
+    backgroundColor: '#1c1c1f',
+    border: '1px solid #2a2a30',
+    borderRadius: '8px',
+    boxShadow: '0 4px 16px rgba(0, 0, 0, 0.4)',
+  },
+  '.cm-tooltip-autocomplete': {
+    '& > ul': {
+      fontFamily: "'Geist Mono', 'JetBrains Mono', 'Courier New', monospace",
+      fontSize: '13px',
+      maxHeight: '300px',
+    },
+    '& > ul > li': {
+      padding: '6px 12px',
+      color: '#d4d4d8',
+      cursor: 'pointer',
+    },
+    '& > ul > li[aria-selected]': {
+      backgroundColor: 'rgba(168, 85, 247, 0.25)',
+      color: '#f0f0f2',
+    },
+    '& > ul > li:hover': {
+      backgroundColor: 'rgba(168, 85, 247, 0.15)',
+    },
+  },
+  '.cm-completionLabel': {
+    color: '#d4d4d8',
+  },
+  '.cm-completionDetail': {
+    color: '#8b8b96',
+    fontStyle: 'italic',
+    marginLeft: '8px',
+  },
+  '.cm-completionIcon': {
+    marginRight: '6px',
+    opacity: '0.7',
+  },
+  '.cm-completionIcon-function, .cm-completionIcon-method': {
+    color: '#a855f7',
+  },
+  '.cm-completionIcon-class': {
+    color: '#22c55e',
+  },
+  '.cm-completionIcon-variable, .cm-completionIcon-property': {
+    color: '#3b82f6',
+  },
+  '.cm-completionIcon-keyword': {
+    color: '#f59e0b',
+  },
 }, { dark: true })
+
+// ─── JavaScript Completions ────────────────────────────────────────────────────
+
+const jsKeywords: Completion[] = [
+  // Keywords
+  'async', 'await', 'break', 'case', 'catch', 'class', 'const', 'continue',
+  'debugger', 'default', 'delete', 'do', 'else', 'export', 'extends', 'false',
+  'finally', 'for', 'function', 'if', 'import', 'in', 'instanceof', 'let',
+  'new', 'null', 'return', 'static', 'super', 'switch', 'this', 'throw',
+  'true', 'try', 'typeof', 'undefined', 'var', 'void', 'while', 'with', 'yield',
+].map(k => ({ label: k, type: 'keyword', boost: 10 }))
+
+const jsBuiltins: Completion[] = [
+  // Built-in objects
+  'Array', 'Boolean', 'Date', 'Error', 'Function', 'JSON', 'Map', 'Math',
+  'Number', 'Object', 'Promise', 'Proxy', 'RegExp', 'Set', 'String', 'Symbol',
+  'WeakMap', 'WeakSet', 'BigInt', 'Intl', 'Reflect',
+].map(k => ({ label: k, type: 'class', boost: 8 }))
+
+const jsGlobalFunctions: Completion[] = [
+  // Global functions
+  'console', 'decodeURI', 'decodeURIComponent', 'encodeURI', 'encodeURIComponent',
+  'eval', 'fetch', 'isFinite', 'isNaN', 'parseFloat', 'parseInt', 'setTimeout',
+  'clearTimeout', 'setInterval', 'clearInterval', 'requestAnimationFrame',
+  'cancelAnimationFrame', 'alert', 'confirm', 'prompt',
+].map(k => ({ label: k, type: 'function', boost: 7 }))
+
+const jsDomApis: Completion[] = [
+  // DOM APIs
+  'document', 'window', 'navigator', 'location', 'history', 'localStorage',
+  'sessionStorage', 'fetch', 'XMLHttpRequest', 'addEventListener', 'removeEventListener',
+  'querySelector', 'querySelectorAll', 'getElementById', 'getElementsByClassName',
+  'getElementsByTagName', 'createElement', 'appendChild', 'removeChild', 'insertBefore',
+  'classList', 'style', 'setAttribute', 'getAttribute', 'textContent', 'innerHTML',
+  'outerHTML', 'parentNode', 'childNodes', 'children', 'firstChild', 'lastChild',
+  'nextSibling', 'previousSibling', 'event', 'Event', 'CustomEvent', 'MutationObserver',
+  'IntersectionObserver', 'ResizeObserver', 'requestAnimationFrame',
+].map(k => ({ label: k, type: 'variable', boost: 6 }))
+
+const jsConsoleMethods: Completion[] = [
+  // console methods
+  'console.log', 'console.error', 'console.warn', 'console.info', 'console.debug',
+  'console.table', 'console.dir', 'console.time', 'console.timeEnd', 'console.trace',
+  'console.group', 'console.groupEnd', 'console.clear',
+].map(k => ({ label: k, type: 'function', boost: 5 }))
+
+const jsMathMethods: Completion[] = [
+  // Math methods
+  'Math.abs', 'Math.ceil', 'Math.floor', 'Math.round', 'Math.max', 'Math.min',
+  'Math.random', 'Math.sqrt', 'Math.pow', 'Math.sin', 'Math.cos', 'Math.tan',
+  'Math.log', 'Math.exp', 'Math.PI', 'Math.E',
+].map(k => ({ label: k, type: 'function', boost: 5 }))
+
+const jsArrayMethods: Completion[] = [
+  // Array methods
+  'Array.from', 'Array.isArray', 'Array.of',
+].map(k => ({ label: k, type: 'function', boost: 5 }))
+
+const jsPromiseMethods: Completion[] = [
+  // Promise methods
+  'Promise.all', 'Promise.race', 'Promise.allSettled', 'Promise.any',
+  'Promise.resolve', 'Promise.reject',
+].map(k => ({ label: k, type: 'function', boost: 5 }))
+
+const jsObjectMethods: Completion[] = [
+  // Object methods
+  'Object.keys', 'Object.values', 'Object.entries', 'Object.assign',
+  'Object.freeze', 'Object.seal', 'Object.create', 'Object.defineProperty',
+  'Object.getOwnPropertyNames', 'Object.getPrototypeOf', 'Object.setPrototypeOf',
+].map(k => ({ label: k, type: 'function', boost: 5 }))
+
+const jsStringMethods: Completion[] = [
+  // String methods (commonly used)
+  '.charAt', '.charCodeAt', '.concat', '.endsWith', '.includes', '.indexOf',
+  '.lastIndexOf', '.match', '.matchAll', '.padEnd', '.padStart', '.repeat',
+  '.replace', '.replaceAll', '.search', '.slice', '.split', '.startsWith',
+  '.substring', '.toLowerCase', '.toUpperCase', '.trim', '.trimStart', '.trimEnd',
+  '.toString', '.valueOf',
+].map(k => ({ label: k, type: 'method', boost: 4 }))
+
+const jsArrayPrototypeMethods: Completion[] = [
+  // Array prototype methods
+  '.push', '.pop', '.shift', '.unshift', '.slice', '.splice', '.concat',
+  '.join', '.reverse', '.sort', '.indexOf', '.lastIndexOf', '.includes',
+  '.forEach', '.map', '.filter', '.reduce', '.reduceRight', '.some', '.every',
+  '.find', '.findIndex', '.findLast', '.findLastIndex', '.flat', '.flatMap',
+  '.fill', '.copyWithin', '.entries', '.keys', '.values', '.at',
+].map(k => ({ label: k, type: 'method', boost: 4 }))
+
+function createJavaScriptCompletions(context: CompletionContext) {
+  const allJsCompletions = [
+    ...jsKeywords,
+    ...jsBuiltins,
+    ...jsGlobalFunctions,
+    ...jsDomApis,
+    ...jsConsoleMethods,
+    ...jsMathMethods,
+    ...jsArrayMethods,
+    ...jsPromiseMethods,
+    ...jsObjectMethods,
+    ...jsStringMethods,
+    ...jsArrayPrototypeMethods,
+  ]
+  return completeFromList(allJsCompletions)(context)
+}
+
+// ─── HTML Tag Completions ──────────────────────────────────────────────────────
+
+const htmlTags: Completion[] = [
+  // Structural elements
+  '!DOCTYPE', 'html', 'head', 'body', 'title', 'meta', 'link', 'style', 'script',
+  // Semantic elements
+  'header', 'footer', 'nav', 'main', 'section', 'article', 'aside', 'details',
+  'summary', 'figure', 'figcaption', 'address', 'hgroup',
+  // Headings
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  // Text elements
+  'p', 'span', 'a', 'strong', 'em', 'b', 'i', 'u', 's', 'strike', 'del', 'ins',
+  'mark', 'small', 'big', 'sub', 'sup', 'abbr', 'cite', 'code', 'kbd', 'samp',
+  'var', 'dfn', 'time', 'q', 'blockquote', 'pre', 'br', 'wbr',
+  // Lists
+  'ul', 'ol', 'li', 'dl', 'dt', 'dd',
+  // Tables
+  'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'caption', 'colgroup', 'col',
+  // Forms
+  'form', 'input', 'textarea', 'select', 'option', 'optgroup', 'button', 'label',
+  'fieldset', 'legend', 'datalist', 'output', 'progress', 'meter',
+  // Media
+  'img', 'picture', 'source', 'video', 'audio', 'track', 'iframe', 'embed',
+  'object', 'param', 'canvas', 'svg', 'math',
+  // Interactive
+  'details', 'summary', 'dialog', 'menu',
+  // Deprecated/legacy (still useful)
+  'center', 'font', 'hr', 'div',
+].map(tag => ({ label: tag, type: 'property', boost: 10 }))
+
+const htmlAttributes: Completion[] = [
+  // Global attributes
+  'id', 'class', 'style', 'title', 'lang', 'dir', 'tabindex', 'accesskey',
+  'hidden', 'contenteditable', 'draggable', 'spellcheck', 'translate',
+  'data-', 'role', 'aria-label', 'aria-labelledby', 'aria-describedby',
+  'aria-hidden', 'aria-live', 'aria-expanded', 'aria-controls', 'aria-checked',
+  // Event handlers
+  'onclick', 'ondblclick', 'onmousedown', 'onmouseup', 'onmouseover',
+  'onmouseout', 'onmousemove', 'onmouseenter', 'onmouseleave',
+  'onkeydown', 'onkeyup', 'onkeypress', 'onfocus', 'onblur', 'onchange',
+  'oninput', 'onsubmit', 'onreset', 'onselect', 'onload', 'onunload',
+  'onerror', 'onresize', 'onscroll',
+  // Link/form attributes
+  'href', 'target', 'rel', 'download', 'hreflang', 'type', 'name', 'value',
+  'placeholder', 'required', 'disabled', 'readonly', 'checked', 'selected',
+  'multiple', 'accept', 'autocomplete', 'autofocus', 'form', 'formaction',
+  'formenctype', 'formmethod', 'formnovalidate', 'formtarget', 'list',
+  'max', 'min', 'step', 'pattern', 'maxlength', 'minlength', 'size',
+  // Media attributes
+  'src', 'alt', 'width', 'height', 'srcset', 'sizes', 'loading', 'decoding',
+  'controls', 'autoplay', 'loop', 'muted', 'preload', 'poster', 'playsinline',
+  // Meta attributes
+  'charset', 'content', 'http-equiv', 'property',
+  // Table attributes
+  'colspan', 'rowspan', 'headers', 'scope',
+].map(attr => ({ label: attr, type: 'property', boost: 9 }))
+
+function createHtmlCompletions(context: CompletionContext) {
+  // First try the built-in HTML completion source
+  const builtIn = htmlCompletionSource(context)
+  if (builtIn) return builtIn
+  
+  // Fall back to our custom completions
+  return completeFromList([...htmlTags, ...htmlAttributes])(context)
+}
+
+// ─── CSS Completions ────────────────────────────────────────────────────────
+
+const cssProperties: Completion[] = [
+  // Layout
+  'display', 'position', 'top', 'right', 'bottom', 'left', 'z-index',
+  'float', 'clear', 'visibility', 'overflow', 'overflow-x', 'overflow-y',
+  'clip', 'clip-path',
+  // Flexbox
+  'flex', 'flex-direction', 'flex-wrap', 'flex-flow', 'justify-content',
+  'align-items', 'align-content', 'align-self', 'order', 'flex-grow',
+  'flex-shrink', 'flex-basis', 'gap', 'row-gap', 'column-gap',
+  // Grid
+  'grid', 'grid-template', 'grid-template-rows', 'grid-template-columns',
+  'grid-template-areas', 'grid-row', 'grid-column', 'grid-area',
+  'grid-auto-rows', 'grid-auto-columns', 'grid-auto-flow', 'place-items',
+  'place-content', 'place-self',
+  // Box model
+  'width', 'height', 'min-width', 'max-width', 'min-height', 'max-height',
+  'margin', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+  'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+  'border', 'border-width', 'border-style', 'border-color',
+  'border-top', 'border-right', 'border-bottom', 'border-left',
+  'border-radius', 'border-top-left-radius', 'border-top-right-radius',
+  'border-bottom-left-radius', 'border-bottom-right-radius',
+  'box-sizing', 'box-shadow', 'outline', 'outline-width', 'outline-style',
+  'outline-color', 'outline-offset',
+  // Typography
+  'font', 'font-family', 'font-size', 'font-weight', 'font-style',
+  'font-variant', 'font-stretch', 'line-height', 'letter-spacing',
+  'word-spacing', 'text-align', 'text-decoration', 'text-transform',
+  'text-indent', 'text-shadow', 'text-overflow', 'white-space',
+  'word-break', 'word-wrap', 'overflow-wrap', 'hyphens',
+  'vertical-align', 'color',
+  // Background
+  'background', 'background-color', 'background-image', 'background-position',
+  'background-size', 'background-repeat', 'background-origin',
+  'background-clip', 'background-attachment',
+  // Effects
+  'opacity', 'filter', 'backdrop-filter', 'mix-blend-mode', 'isolation',
+  'transform', 'transform-origin', 'transform-style', 'perspective',
+  'perspective-origin', 'scale', 'rotate', 'translate', 'will-change',
+  // Transitions & Animations
+  'transition', 'transition-property', 'transition-duration',
+  'transition-timing-function', 'transition-delay',
+  'animation', 'animation-name', 'animation-duration', 'animation-timing-function',
+  'animation-delay', 'animation-iteration-count', 'animation-direction',
+  'animation-fill-mode', 'animation-play-state',
+  // Other
+  'cursor', 'pointer-events', 'user-select', 'resize', 'appearance',
+  'content', 'quotes', 'counter-reset', 'counter-increment',
+  'list-style', 'list-style-type', 'list-style-position', 'list-style-image',
+  'object-fit', 'object-position', 'aspect-ratio', 'scroll-behavior',
+  'scroll-snap-type', 'scroll-snap-align',
+].map(prop => ({ label: prop, type: 'property', boost: 10 }))
+
+const cssValues: Completion[] = [
+  // Common values
+  'inherit', 'initial', 'unset', 'revert', 'auto', 'none', 'normal',
+  // Display values
+  'block', 'inline', 'inline-block', 'flex', 'grid', 'inline-flex', 'inline-grid',
+  'table', 'table-row', 'table-cell', 'list-item', 'contents', 'flow-root',
+  // Position values
+  'static', 'relative', 'absolute', 'fixed', 'sticky',
+  // Flex values
+  'row', 'row-reverse', 'column', 'column-reverse', 'nowrap', 'wrap', 'wrap-reverse',
+  'flex-start', 'flex-end', 'center', 'space-between', 'space-around', 'space-evenly',
+  'stretch', 'baseline',
+  // Common sizes
+  '100%', '50%', '25%', '75%', '100vh', '100vw', '100dvh', '100svh',
+  'fit-content', 'max-content', 'min-content', 'fill-available',
+  // Colors
+  'transparent', 'currentColor', 'black', 'white', 'red', 'green', 'blue',
+  'yellow', 'orange', 'purple', 'pink', 'gray', 'grey', 'silver',
+  // Common colors (tailwind-ish)
+  'primary', 'secondary', 'accent', 'muted', 'destructive',
+  // Border style
+  'solid', 'dashed', 'dotted', 'double', 'groove', 'ridge', 'inset', 'outset',
+  // Text alignment
+  'left', 'right', 'center', 'justify', 'start', 'end',
+  // Font
+  'bold', 'bolder', 'lighter', 'italic', 'oblique', 'normal',
+  'small-caps', 'serif', 'sans-serif', 'monospace', 'cursive', 'fantasy',
+  // Overflow
+  'hidden', 'visible', 'scroll', 'auto',
+  // Cursor
+  'pointer', 'default', 'text', 'move', 'not-allowed', 'wait', 'crosshair',
+  'grab', 'grabbing', 'zoom-in', 'zoom-out',
+  // Transitions
+  'ease', 'ease-in', 'ease-out', 'ease-in-out', 'linear', 'step-start', 'step-end',
+  // Animation direction
+  'normal', 'reverse', 'alternate', 'alternate-reverse',
+  // Object fit
+  'cover', 'contain', 'fill', 'scale-down',
+  // Other
+  'both', 'forwards', 'backwards', 'infinite', 'paused', 'running',
+].map(val => ({ label: val, type: 'variable', boost: 8 }))
+
+const cssUnits: Completion[] = [
+  // Length units (these are often typed directly after numbers, but included for reference)
+  'px', 'em', 'rem', 'vh', 'vw', 'vmin', 'vmax', '%', 'ch', 'ex', 'lh',
+  'cm', 'mm', 'in', 'pt', 'pc', 'fr', 'deg', 'rad', 'grad', 'turn',
+  's', 'ms', 'Hz', 'kHz',
+].map(unit => ({ label: unit, type: 'unit', boost: 7 }))
+
+function createCssCompletions(context: CompletionContext) {
+  // First try the built-in CSS completion source
+  const builtIn = cssCompletionSource(context)
+  if (builtIn) return builtIn
+  
+  // Fall back to our custom completions
+  return completeFromList([...cssProperties, ...cssValues, ...cssUnits])(context)
+}
 
 // ─── Language Detection ────────────────────────────────────────────────────
 
@@ -90,17 +425,52 @@ function getLanguageExtension(filename: string): Extension[] {
   switch (ext) {
     case 'js':
     case 'mjs':
-      return [javascript()]
+      return [
+        javascript(),
+        autocompletion({
+          override: [createJavaScriptCompletions],
+          activateOnTyping: true,
+          maxRenderedOptions: 50,
+        })
+      ]
     case 'ts':
     case 'tsx':
-      return [javascript({ typescript: true })]
+      return [
+        javascript({ typescript: true }),
+        autocompletion({
+          override: [createJavaScriptCompletions],
+          activateOnTyping: true,
+          maxRenderedOptions: 50,
+        })
+      ]
     case 'jsx':
-      return [javascript({ jsx: true })]
+      return [
+        javascript({ jsx: true }),
+        autocompletion({
+          override: [createJavaScriptCompletions, createHtmlCompletions],
+          activateOnTyping: true,
+          maxRenderedOptions: 50,
+        })
+      ]
     case 'html':
     case 'htm':
-      return [html()]
+      return [
+        html(),
+        autocompletion({
+          override: [createHtmlCompletions],
+          activateOnTyping: true,
+          maxRenderedOptions: 50,
+        })
+      ]
     case 'css':
-      return [css()]
+      return [
+        css(),
+        autocompletion({
+          override: [createCssCompletions],
+          activateOnTyping: true,
+          maxRenderedOptions: 50,
+        })
+      ]
     case 'json':
       return [json()]
     case 'md':
