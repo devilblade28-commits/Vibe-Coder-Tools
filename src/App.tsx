@@ -1,4 +1,16 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+/**
+ * App - Main Application Component
+ * 
+ * This component serves as the UI layer, consuming context hooks for:
+ * - Workspace (active project management)
+ * - FileSystem (files, folders, assets)
+ * - AI (chat messages and settings)
+ * - Preview (HTML preview generation)
+ * 
+ * UI-only state (tabs, modals) remains local to this component.
+ */
+
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { AppShell } from './ui/AppShell'
 import { Header } from './ui/Header'
 import { ChatScreen } from './ui/ChatScreen'
@@ -7,142 +19,107 @@ import { PreviewScreen } from './ui/PreviewScreen'
 import { SettingsScreen } from './ui/SettingsScreen'
 import { ModelSelector } from './ui/ModelSelector'
 import { ImportModal, type ImportResult } from './ui/ImportModal'
-import type {
-  TabId, Project, ProjectFile, ProjectFolder, ProjectAsset, ChatMessage,
-  AIProvider, FileSystemUIState, AIFileAction, CustomProviderConfig,
-} from './types'
-import * as projectService from './workspace/projectService'
-import * as ls from './storage/localStorageService'
-import * as idb from './storage/indexedDBService'
-import { sendMessage, buildSystemPrompt, PROVIDER_MODELS } from './ai/providers'
-import { executeActions, buildActionSummary } from './ai/executeActions'
-import { v4 as uuid } from 'uuid'
+import type { TabId, ProjectFile, ProjectFolder, ProjectAsset, AIFileAction, FileSystemUIState } from './types'
 
-// ─── File save debounce ───────────────────────────────────────────────────────
+// Context hooks
+import { useWorkspace } from './workspace/WorkspaceContext'
+import { useFileSystem } from './filesystem/FileSystemContext'
+import { useAI, type SendContext } from './ai/AIContext'
+import { usePreview } from './preview/PreviewContext'
+
+// Services (for operations not in contexts)
+import * as projectService from './workspace/projectService'
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
 const FILE_SAVE_DEBOUNCE_MS = 500
 
-export default function App() {
-  const [activeTab, setActiveTab] = useState<TabId>('chat')
-  const [project, setProject] = useState<Project | null>(null)
-  const [files, setFiles] = useState<ProjectFile[]>([])
-  const [folders, setFolders] = useState<ProjectFolder[]>([])
-  const [assets, setAssets] = useState<ProjectAsset[]>([])
-  const [showImportModal, setShowImportModal] = useState(false)
+// ─── Main Component ──────────────────────────────────────────────────────────
 
-  // File system UI state — lifted here so it survives tab switches
+export default function App() {
+  // ─── Context Hooks ────────────────────────────────────────────────────────
+  
+  const workspace = useWorkspace()
+  const fileSystem = useFileSystem()
+  const ai = useAI()
+  const preview = usePreview()
+  
+  // ─── Local UI State ───────────────────────────────────────────────────────
+  
+  const [activeTab, setActiveTab] = useState<TabId>('chat')
+  const [showImportModal, setShowImportModal] = useState(false)
+  const [showModelSelector, setShowModelSelector] = useState(false)
   const [fsUiState, setFsUiState] = useState<FileSystemUIState>({
     view: 'tree',
     expandedFolderIds: [],
     isCreatingFile: false,
   })
-
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [isStreaming, setIsStreaming] = useState(false)
-  const [chatError, setChatError] = useState<string | null>(null)
-  const [refreshTrigger, setRefreshTrigger] = useState(0)
-  const [showModelSelector, setShowModelSelector] = useState(false)
-  const [aiSettings, setAiSettings] = useState(() => ls.getAISettings())
-  const [isInitializing, setIsInitializing] = useState(true)
-
-  const abortRef = useRef<AbortController | null>(null)
-  const lastUserMsgRef = useRef<string>('')
-
+  
   // Debounce timer for file content saves
   const saveTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
-
-  // ── Initialization — deterministic hydration ────────────────────────────
-
+  const lastUserMsgRef = useRef<string>('')
+  
+  // ─── Derived State ─────────────────────────────────────────────────────────
+  
+  const project = workspace.activeProject
+  const files = fileSystem.files
+  const folders = fileSystem.folders
+  const assets = fileSystem.assets
+  
+  // ─── Effects ───────────────────────────────────────────────────────────────
+  
+  // Open editor if there's a valid active file after project loads
   useEffect(() => {
-    async function init() {
-      try {
-        const lastId = ls.getLastProjectId()
-
-        if (lastId) {
-          const loaded = await projectService.loadFullProject(lastId)
-          if (loaded) {
-            setProject(loaded.project)
-            setFiles(loaded.files)
-            setFolders(loaded.folders)
-            setAssets(loaded.assets)
-            // Open editor if there's a valid active file
-            if (loaded.project.activeFileId) {
-              setFsUiState((prev) => ({ ...prev, view: 'editor' }))
-            }
-            return
-          }
-          // Project in LS not found in IDB — already cleaned up by loadFullProject
-        }
-
-        // No valid last project — create a fresh one
-        const p = await projectService.createProject('My First Project')
-        setProject(p)
-        setFiles([])
-        setFolders([])
-        setAssets([])
-      } catch (err) {
-        console.error('Failed to initialize workspace:', err)
-        // Create fresh project as fallback
-        try {
-          const p = await projectService.createProject('My First Project')
-          setProject(p)
-        } catch { /* ignore */ }
-      } finally {
-        setIsInitializing(false)
-      }
+    if (project?.activeFileId) {
+      setFsUiState(prev => ({ ...prev, view: 'editor' }))
     }
-    init()
-  }, [])
-
-  // ── Reload files from IDB ────────────────────────────────────────────────
-
-  const reloadFiles = useCallback(async (projectId: string) => {
-    const [f, fo, a] = await Promise.all([
-      projectService.getProjectFiles(projectId),
-      projectService.getProjectFolders(projectId),
-      projectService.getProjectAssets(projectId),
-    ])
-    setFiles(f)
-    setFolders(fo)
-    setAssets(a)
-    setRefreshTrigger((n) => n + 1)
-  }, [])
-
-  // ── Project rename ───────────────────────────────────────────────────────
-
+  }, [project?.activeFileId])
+  
+  // Rebuild preview when files/assets change
+  useEffect(() => {
+    if (files.length > 0 || assets.length > 0) {
+      preview.rebuild(files, assets)
+    }
+  }, [files, assets, preview])
+  
+  // ─── Project Operations ─────────────────────────────────────────────────────
+  
   const handleRenameProject = useCallback(async (name: string) => {
     if (!project) return
-    await projectService.renameProject(project.id, name)
-    setProject((prev) => prev ? { ...prev, name: name.trim() || prev.name } : prev)
-  }, [project])
-
-  // ── File operations ──────────────────────────────────────────────────────
-
+    await workspace.renameProject(project.id, name)
+  }, [project, workspace])
+  
+  const handleDeleteProject = useCallback(async () => {
+    if (!project) return
+    await fileSystem.clearFileSystem()
+    await projectService.deleteProjectData(project.id)
+    const newProject = await workspace.createProject('New Project')
+    workspace.setActiveProject(newProject)
+    ai.clearMessages()
+    setFsUiState({ view: 'tree', expandedFolderIds: [], isCreatingFile: false })
+  }, [project, workspace, fileSystem, ai])
+  
+  // ─── File Operations ────────────────────────────────────────────────────────
+  
   const handleCreateFile = useCallback(async (name: string) => {
     if (!project) return
     try {
-      const file = await projectService.createFile(
-        project.id, name, projectService.getFileTemplate(name), null
-      )
-      setFiles((prev) => [...prev, file])
-      const updated: Project = { ...project, activeFileId: file.id, updatedAt: new Date().toISOString() }
-      setProject(updated)
-      await projectService.saveProject(updated)
-      setFsUiState((prev) => ({ ...prev, view: 'editor', isCreatingFile: false }))
-      setRefreshTrigger((n) => n + 1)
+      const template = projectService.getFileTemplate(name)
+      const file = await fileSystem.createFile(project.id, { name, content: template })
+      await workspace.updateActiveProject({ activeFileId: file.id })
+      setFsUiState(prev => ({ ...prev, view: 'editor', isCreatingFile: false }))
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       alert(msg)
     }
-  }, [project])
-
+  }, [project, fileSystem, workspace])
+  
   const handleSelectFile = useCallback(async (file: ProjectFile) => {
     if (!project) return
-    const updated: Project = { ...project, activeFileId: file.id, updatedAt: new Date().toISOString() }
-    setProject(updated)
-    await projectService.saveProject(updated)
-    setFsUiState((prev) => ({ ...prev, view: 'editor' }))
-  }, [project])
-
+    await workspace.updateActiveProject({ activeFileId: file.id })
+    setFsUiState(prev => ({ ...prev, view: 'editor' }))
+  }, [project, workspace])
+  
   const handleDeleteFile = useCallback(async (file: ProjectFile) => {
     if (!project) return
     // Cancel any pending save for this file
@@ -150,94 +127,133 @@ export default function App() {
       clearTimeout(saveTimerRef.current[file.id])
       delete saveTimerRef.current[file.id]
     }
-    await projectService.deleteFile(file.id)
-    setFiles((prev) => prev.filter((f) => f.id !== file.id))
-
-    const remaining = files.filter((f) => f.id !== file.id)
+    await fileSystem.deleteFile(file.id)
+    
+    const remaining = files.filter(f => f.id !== file.id)
     const newActiveId = project.activeFileId === file.id
       ? (remaining[0]?.id ?? null)
       : project.activeFileId
-
+    
     if (newActiveId !== project.activeFileId) {
-      const updated: Project = { ...project, activeFileId: newActiveId }
-      setProject(updated)
-      await projectService.saveProject(updated)
+      await workspace.updateActiveProject({ activeFileId: newActiveId })
     }
-
+    
     if (!newActiveId) {
-      setFsUiState((prev) => ({ ...prev, view: 'tree' }))
+      setFsUiState(prev => ({ ...prev, view: 'tree' }))
     }
-    setRefreshTrigger((n) => n + 1)
-  }, [project, files])
-
+  }, [project, files, fileSystem, workspace])
+  
   /**
    * Called on every keystroke in the editor.
-   * Updates in-memory state immediately for a snappy UI,
-   * debounces the IDB write by FILE_SAVE_DEBOUNCE_MS.
+   * Updates in-memory state immediately, debounces the storage write.
    */
   const handleUpdateContent = useCallback((fileId: string, content: string) => {
-    // Optimistic in-memory update
-    setFiles((prev) =>
-      prev.map((f) => f.id === fileId ? { ...f, content, size: content.length } : f)
-    )
-
+    // Optimistic in-memory update (fileSystem already handles this)
+    const file = files.find(f => f.id === fileId)
+    if (!file) return
+    
+    // Update file in context (optimistic)
+    fileSystem.updateFile({ ...file, content }, content)
+    
     // Debounce IDB write
     if (saveTimerRef.current[fileId]) clearTimeout(saveTimerRef.current[fileId])
     saveTimerRef.current[fileId] = setTimeout(async () => {
-      const fileInState = files.find((f) => f.id === fileId)
+      const fileInState = fileSystem.files.find(f => f.id === fileId)
       if (!fileInState) return
       try {
-        const saved = await projectService.updateFileContent(
-          { ...fileInState, content },
-          content
-        )
-        // Update state with the saved version (has new updatedAt)
-        setFiles((prev) => prev.map((f) => f.id === fileId ? saved : f))
+        await fileSystem.updateFile(fileInState, fileInState.content)
       } catch (err) {
         console.error('Failed to save file content:', err)
       }
     }, FILE_SAVE_DEBOUNCE_MS)
-  }, [files])
-
-  // ── Import handler ────────────────────────────────────────────────────────
-
+  }, [files, fileSystem])
+  
+  // ─── Import Handler ─────────────────────────────────────────────────────────
+  
   const handleImport = useCallback(async (results: ImportResult[]) => {
     if (!project) return
-
+    
     for (const result of results) {
       if (result.kind === 'text') {
-        // Check if file already exists → upsert
-        await projectService.upsertFileByName(project.id, result.name, result.content)
+        await fileSystem.upsertFileByName(project.id, result.name, result.content)
       } else if (result.kind === 'asset') {
-        // Check if asset with same name already exists → replace
-        const existingAssets = await projectService.getProjectAssets(project.id)
-        const existing = existingAssets.find((a) => a.fileName === result.name)
+        // Check if asset with same name already exists
+        const existing = assets.find(a => a.fileName === result.name)
         if (existing) {
-          await projectService.deleteAsset(existing.id)
+          await fileSystem.deleteAsset(existing.id)
         }
-        await projectService.createAsset(project.id, result.name, result.mimeType, result.blob)
+        await fileSystem.createAsset(project.id, new File([result.blob], result.name, { type: result.mimeType }))
       }
     }
-
-    await reloadFiles(project.id)
+    
+    await fileSystem.loadFullProject(project.id)
     setActiveTab('files')
-  }, [project, reloadFiles])
-
-  // ── Apply action from chat artifact ──────────────────────────────────────
-
+  }, [project, assets, fileSystem])
+  
+  // ─── AI Chat Operations ─────────────────────────────────────────────────────
+  
+  const buildProjectContext = useCallback(() => {
+    if (files.length === 0) return 'No files yet — start fresh!'
+    return files
+      .filter(f => f.type === 'text')
+      .map(f => {
+        const preview = f.content.slice(0, 800)
+        const truncated = f.content.length > 800 ? '\n...(truncated)' : ''
+        return `=== ${f.name} ===\n${preview}${truncated}`
+      })
+      .join('\n\n')
+  }, [files])
+  
+  const handleSend = useCallback(async (text: string) => {
+    if (!project) return
+    
+    lastUserMsgRef.current = text
+    
+    const context: SendContext = {
+      projectId: project.id,
+      projectContext: buildProjectContext(),
+      onActionsExecuted: async (results) => {
+        // Reload files after actions are executed
+        await fileSystem.loadFullProject(project.id)
+        setActiveTab('files')
+      }
+    }
+    
+    await ai.send(text, context)
+  }, [project, buildProjectContext, ai, fileSystem])
+  
+  const handleStop = useCallback(() => {
+    ai.stop()
+  }, [ai])
+  
+  const handleRetry = useCallback(() => {
+    if (!project) return
+    const context: SendContext = {
+      projectId: project.id,
+      projectContext: buildProjectContext(),
+      onActionsExecuted: async () => {
+        await fileSystem.loadFullProject(project.id)
+        setActiveTab('files')
+      }
+    }
+    ai.retry(context)
+  }, [project, buildProjectContext, ai, fileSystem])
+  
+  // ─── Apply Action from Chat Artifact ────────────────────────────────────────
+  
   const handleApplyAction = useCallback(async (
     action: AIFileAction
   ): Promise<{ success: boolean; error?: string }> => {
     if (!project) return { success: false, error: 'No project loaded' }
-
+    
     try {
+      const { executeActions } = await import('./ai/executeActions')
       const results = await executeActions(project.id, [action])
       const result = results[0]
       if (!result) return { success: false, error: 'No result returned' }
-
+      
       if (result.success) {
-        await reloadFiles(project.id)
-        setRefreshTrigger((n) => n + 1)
+        await fileSystem.loadFullProject(project.id)
         return { success: true }
       } else {
         return { success: false, error: result.error }
@@ -246,209 +262,29 @@ export default function App() {
       const error = err instanceof Error ? err.message : String(err)
       return { success: false, error }
     }
-  }, [project, reloadFiles])
-
-  // ── Chat / AI ────────────────────────────────────────────────────────────
-
-  const buildProjectContext = useCallback(() => {
-    if (files.length === 0) return 'No files yet — start fresh!'
-    return files
-      .filter((f) => f.type === 'text')
-      .map((f) => {
-        const preview = f.content.slice(0, 800)
-        const truncated = f.content.length > 800 ? '\n...(truncated)' : ''
-        return `=== ${f.name} ===\n${preview}${truncated}`
-      })
-      .join('\n\n')
-  }, [files])
-
-  const handleSend = useCallback(async (text: string) => {
-    if (!project || isStreaming) return
-
-    setChatError(null)
-    lastUserMsgRef.current = text
-
-    const userMsg: ChatMessage = {
-      id: uuid(), role: 'user', content: text, timestamp: new Date().toISOString(),
-    }
-    const assistantMsgId = uuid()
-    const assistantMsg: ChatMessage = {
-      id: assistantMsgId, role: 'assistant', content: '',
-      timestamp: new Date().toISOString(), isStreaming: true,
-    }
-
-    setMessages((prev) => [...prev, userMsg, assistantMsg])
-    setIsStreaming(true)
-    abortRef.current = new AbortController()
-
-    const provider = aiSettings.activeProvider
-    const isCustom = provider === 'custom'
-    const apiKey = isCustom ? aiSettings.customProvider.apiKey : (aiSettings.apiKeys[provider] ?? '')
-
-    if (!apiKey) {
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMsgId
-            ? { ...m, content: `⚠️ No API key set for ${provider}. Go to Settings to add your key.`, isStreaming: false }
-            : m
-        )
-      )
-      setIsStreaming(false)
-      return
-    }
-
-    let fullDisplayText = ''
-
-    try {
-      const systemPrompt = buildSystemPrompt(aiSettings.customInstruction, buildProjectContext())
-
-      const isCustomProvider = provider === 'custom'
-      const result = await sendMessage({
-        provider,
-        model: isCustomProvider ? aiSettings.customProvider.model : aiSettings.activeModel,
-        apiKey,
-        endpoint: isCustomProvider ? aiSettings.customProvider.endpoint : undefined,
-        extraHeaders: isCustomProvider ? aiSettings.customProvider.extraHeaders : undefined,
-        messages: [...messages, userMsg].filter((m) => m.role !== 'system'),
-        systemPrompt,
-        onChunk: (chunk) => {
-          // During streaming, show raw text; we'll clean it up after
-          fullDisplayText += chunk
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantMsgId ? { ...m, content: fullDisplayText } : m
-            )
-          )
-        },
-        signal: abortRef.current.signal,
-      })
-
-      // Execute file actions automatically
-      let actionResults = undefined
-      let finalContent = result.displayText || result.rawText
-
-      if (result.structured?.actions && result.structured.actions.length > 0) {
-        actionResults = await executeActions(project.id, result.structured.actions)
-        await reloadFiles(project.id)
-        setActiveTab('files')
-
-        // Build action summary to append
-        const summary = buildActionSummary(actionResults)
-        if (summary) {
-          finalContent = finalContent
-            ? `${finalContent}\n\n${summary}`
-            : summary
-        }
-      }
-
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMsgId
-            ? { ...m, content: finalContent, isStreaming: false, actionResults }
-            : m
-        )
-      )
-    } catch (err: unknown) {
-      const error = err instanceof Error ? err.message : String(err)
-      if (error.includes('abort') || error.toLowerCase().includes('aborterror')) {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsgId
-              ? { ...m, content: fullDisplayText || '(stopped)', isStreaming: false }
-              : m
-          )
-        )
-      } else {
-        setChatError(error)
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsgId
-              ? { ...m, content: fullDisplayText || 'Something went wrong.', isStreaming: false, error }
-              : m
-          )
-        )
-      }
-    } finally {
-      setIsStreaming(false)
-    }
-  }, [project, isStreaming, aiSettings, messages, buildProjectContext, reloadFiles])
-
-  const handleStop = useCallback(() => { abortRef.current?.abort() }, [])
-
-  const handleRetry = useCallback(() => {
-    if (!lastUserMsgRef.current) return
-    // Remove the last user+assistant pair before retrying
-    setMessages((prev) => {
-      const lastUserIdx = [...prev].reverse().findIndex((m) => m.role === 'user')
-      if (lastUserIdx < 0) return prev
-      const cutAt = prev.length - 1 - lastUserIdx
-      return prev.slice(0, cutAt)
-    })
-    handleSend(lastUserMsgRef.current)
-  }, [handleSend])
-
-  // ── Settings ─────────────────────────────────────────────────────────────
-
-  const handleUpdateProvider = useCallback((provider: AIProvider) => {
-    ls.setActiveProvider(provider)
-    // Auto-select first model for built-in providers
-    if (provider !== 'custom') {
-      const group = PROVIDER_MODELS.find((g) => g.provider === provider)
-      if (group) ls.setActiveModel(group.models[0].value)
-    }
-    setAiSettings(ls.getAISettings())
-  }, [])
-
-  const handleUpdateModel = useCallback((_provider: AIProvider, model: string) => {
-    ls.setActiveModel(model)
-    setAiSettings(ls.getAISettings())
-  }, [])
-
-  const handleUpdateApiKey = useCallback((provider: AIProvider, key: string) => {
-    ls.setApiKey(provider, key)
-    setAiSettings(ls.getAISettings())
-  }, [])
-
-  const handleUpdateSystemInstruction = useCallback((text: string) => {
-    ls.setCustomInstruction(text)
-    setAiSettings(ls.getAISettings())
-  }, [])
-
-  const handleUpdateCustomProvider = useCallback((config: CustomProviderConfig) => {
-    ls.setCustomProviderConfig(config)
-    setAiSettings(ls.getAISettings())
-  }, [])
-
-  const handleDeleteProject = useCallback(async () => {
-    if (!project) return
-    await projectService.deleteProjectData(project.id)
-    const p = await projectService.createProject('New Project')
-    setProject(p)
-    setFiles([])
-    setFolders([])
-    setAssets([])
-    setMessages([])
-    setFsUiState({ view: 'tree', expandedFolderIds: [], isCreatingFile: false })
-    setRefreshTrigger((n) => n + 1)
-  }, [project])
-
+  }, [project, fileSystem])
+  
+  // ─── Settings Handlers ──────────────────────────────────────────────────────
+  
+  const handleModelSelect = useCallback((provider: typeof ai.settings.activeProvider, model: string) => {
+    ai.updateProvider(provider)
+    ai.updateModel(provider, model)
+  }, [ai])
+  
+  // ─── Reset All ───────────────────────────────────────────────────────────────
+  
   const handleResetAll = useCallback(async () => {
-    // Clear localStorage first
-    ls.clearAllAppKeys()
-    // Delete entire IDB database
-    await idb.deleteDatabase()
+    const { clearAllAppKeys } = await import('./storage/localStorageService')
+    const { deleteDatabase } = await import('./storage/indexedDBService')
+    
+    clearAllAppKeys()
+    await deleteDatabase()
     window.location.reload()
   }, [])
-
-  const handleModelSelect = useCallback((provider: AIProvider, model: string) => {
-    ls.setActiveProvider(provider)
-    ls.setActiveModel(model)
-    setAiSettings(ls.getAISettings())
-  }, [])
-
-  // ── Loading state ────────────────────────────────────────────────────────
-
-  if (isInitializing) {
+  
+  // ─── Loading State ───────────────────────────────────────────────────────────
+  
+  if (workspace.isLoading) {
     return (
       <div style={{ height: '100dvh', background: '#0d0d0f', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ textAlign: 'center', color: '#4a4a54', fontSize: '13px' }}>
@@ -458,14 +294,18 @@ export default function App() {
       </div>
     )
   }
-
-  const activeProvider = aiSettings.activeProvider
-  const activeModel = aiSettings.activeModel
-
+  
+  // ─── Render ──────────────────────────────────────────────────────────────────
+  
+  const activeProvider = ai.settings.activeProvider
+  const activeModel = ai.settings.activeProvider === 'custom' 
+    ? ai.settings.customProvider.model 
+    : ai.settings.activeModel
+  
   return (
     <>
       <style>{globalStyles}</style>
-
+      
       <AppShell
         activeTab={activeTab}
         onTabChange={setActiveTab}
@@ -474,32 +314,30 @@ export default function App() {
             projectName={project?.name ?? 'Project'}
             onRenameProject={handleRenameProject}
             activeProvider={activeProvider}
-            activeModel={activeProvider === 'custom' ? aiSettings.customProvider.model : activeModel}
-            customProviderLabel={aiSettings.customProvider.label}
+            activeModel={activeModel}
+            customProviderLabel={ai.settings.customProvider.label}
             onOpenModelSelector={() => setShowModelSelector(true)}
             onOpenSettings={() => setActiveTab('settings')}
           />
         }
-
       >
-        {/* All tabs are rendered but only the active one is visible.
-            This preserves local state (e.g. editor view) across tab switches. */}
-
+        {/* Chat Tab */}
         <div style={{ display: activeTab === 'chat' ? 'flex' : 'none', height: '100%', flexDirection: 'column' }}>
           <ChatScreen
-            messages={messages}
-            isStreaming={isStreaming}
+            messages={ai.messages}
+            isStreaming={ai.isStreaming}
             onSend={handleSend}
             onStop={handleStop}
             onRetry={handleRetry}
-            error={chatError}
-            hasApiKey={!!aiSettings.apiKeys[activeProvider]}
+            error={ai.error}
+            hasApiKey={ai.hasApiKey}
             onGoToSettings={() => setActiveTab('settings')}
             onApplyAction={handleApplyAction}
             onOpenImport={() => setShowImportModal(true)}
           />
         </div>
-
+        
+        {/* Files Tab */}
         <div style={{ display: activeTab === 'files' ? 'flex' : 'none', height: '100%', flexDirection: 'column' }}>
           <FilesScreen
             files={files}
@@ -515,31 +353,33 @@ export default function App() {
             onOpenImport={() => setShowImportModal(true)}
           />
         </div>
-
+        
+        {/* Preview Tab */}
         <div style={{ display: activeTab === 'preview' ? 'flex' : 'none', height: '100%', flexDirection: 'column' }}>
           <PreviewScreen
             files={files}
             assets={assets}
-            refreshTrigger={refreshTrigger}
+            refreshTrigger={preview.refreshTrigger}
           />
         </div>
-
+        
+        {/* Settings Tab */}
         <div style={{ display: activeTab === 'settings' ? 'flex' : 'none', height: '100%', flexDirection: 'column' }}>
           <SettingsScreen
-            settings={aiSettings}
+            settings={ai.settings}
             projectName={project?.name ?? ''}
             fileCount={files.length}
-            onUpdateProvider={handleUpdateProvider}
-            onUpdateModel={handleUpdateModel}
-            onUpdateApiKey={handleUpdateApiKey}
-            onUpdateSystemInstruction={handleUpdateSystemInstruction}
-            onUpdateCustomProvider={handleUpdateCustomProvider}
+            onUpdateProvider={ai.updateProvider}
+            onUpdateModel={ai.updateModel}
+            onUpdateApiKey={ai.updateApiKey}
+            onUpdateSystemInstruction={ai.updateCustomInstruction}
+            onUpdateCustomProvider={ai.updateCustomProvider}
             onDeleteProject={handleDeleteProject}
             onResetAll={handleResetAll}
           />
         </div>
       </AppShell>
-
+      
       {showModelSelector && (
         <ModelSelector
           activeProvider={activeProvider}
@@ -548,7 +388,7 @@ export default function App() {
           onClose={() => setShowModelSelector(false)}
         />
       )}
-
+      
       {showImportModal && (
         <ImportModal
           onClose={() => setShowImportModal(false)}
@@ -558,6 +398,8 @@ export default function App() {
     </>
   )
 }
+
+// ─── Global Styles ─────────────────────────────────────────────────────────────
 
 const globalStyles = `
   @keyframes spin { to { transform: rotate(360deg); } }
