@@ -53,6 +53,7 @@ export default function App() {
     view: 'tree',
     expandedFolderIds: [],
     isCreatingFile: false,
+    openFileIds: [],
   })
   
   // Debounce timer for file content saves
@@ -110,8 +111,21 @@ export default function App() {
   
   const handleSelectFile = useCallback(async (file: ProjectFile) => {
     if (!project) return
+    // Add to open tabs if not already open
+    setFsUiState(prev => {
+      const isOpen = prev.openFileIds.includes(file.id)
+      if (isOpen) {
+        return { ...prev, view: 'editor' }
+      }
+      // Keep max 5 tabs open
+      const newOpenIds = [...prev.openFileIds, file.id]
+      return {
+        ...prev,
+        view: 'editor',
+        openFileIds: newOpenIds.length > 5 ? newOpenIds.slice(newOpenIds.length - 5) : newOpenIds,
+      }
+    })
     await workspace.updateActiveProject({ activeFileId: file.id })
-    setFsUiState(prev => ({ ...prev, view: 'editor' }))
   }, [project, workspace])
   
   const handleDeleteFile = useCallback(async (file: ProjectFile) => {
@@ -123,6 +137,12 @@ export default function App() {
     }
     await fileSystem.deleteFile(file.id)
     setPreviewRefreshTrigger(prev => prev + 1)
+    
+    // Remove from open tabs
+    setFsUiState(prev => ({
+      ...prev,
+      openFileIds: prev.openFileIds.filter(id => id !== file.id),
+    }))
     
     const remaining = files.filter(f => f.id !== file.id)
     const newActiveId = project.activeFileId === file.id
@@ -158,6 +178,50 @@ export default function App() {
       }
     }, FILE_SAVE_DEBOUNCE_MS)
   }, [files, fileSystem])
+
+  // ─── File Rename Handler ─────────────────────────────────────────────────────
+
+  const handleRenameFile = useCallback(async (fileId: string, newName: string) => {
+    const file = files.find(f => f.id === fileId)
+    if (!file || file.name === newName) return
+
+    // Update the file name locally first for optimistic UI
+    fileSystem.setFileContentLocally(fileId, file.content) // Keep content the same
+    
+    // Create updated file object
+    const updatedFile = {
+      ...file,
+      name: newName,
+      path: `/${newName}`,
+      updatedAt: new Date().toISOString(),
+    }
+    
+    // Persist to IndexedDB
+    try {
+      const { putFile } = await import('./storage/indexedDBService')
+      await putFile(updatedFile)
+      // Refresh from storage
+      await fileSystem.loadFullProject(project!.id)
+      setPreviewRefreshTrigger(prev => prev + 1)
+    } catch (err) {
+      console.error('Failed to rename file:', err)
+      alert('Failed to rename file')
+    }
+  }, [files, fileSystem, project])
+
+  // ─── Close Tab Handler ───────────────────────────────────────────────────────
+
+  const handleCloseTab = useCallback((fileId: string) => {
+    setFsUiState(prev => {
+      const newOpenIds = prev.openFileIds.filter(id => id !== fileId)
+      // If closing the active file, switch to another open file
+      if (project?.activeFileId === fileId && newOpenIds.length > 0) {
+        const newActiveId = newOpenIds[newOpenIds.length - 1]
+        workspace.updateActiveProject({ activeFileId: newActiveId })
+      }
+      return { ...prev, openFileIds: newOpenIds }
+    })
+  }, [project?.activeFileId, workspace])
   
   // ─── Import Handler ─────────────────────────────────────────────────────────
   
@@ -351,6 +415,8 @@ export default function App() {
             onDeleteFile={handleDeleteFile}
             onUpdateContent={handleUpdateContent}
             onOpenImport={() => setShowImportModal(true)}
+            onRenameFile={handleRenameFile}
+            onCloseTab={handleCloseTab}
           />
         </div>
         

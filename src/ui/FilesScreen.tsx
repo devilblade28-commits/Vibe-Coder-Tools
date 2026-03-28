@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import {
   FilePlus, ChevronRight, ChevronDown,
-  MoreHorizontal, ChevronLeft, FileText, Image, Folder, Upload,
+  MoreHorizontal, ChevronLeft, FileText, Image, Folder, Upload,  X, Pencil,
 } from 'lucide-react'
 import type { ProjectFile, ProjectFolder, ProjectAsset, FileSystemUIState } from '../types'
 import { getFileExtension } from '../workspace/projectService'
+import { CodeEditor } from './CodeEditor'
 
 interface FilesScreenProps {
   files: ProjectFile[]
@@ -18,6 +19,8 @@ interface FilesScreenProps {
   onDeleteFile: (file: ProjectFile) => void
   onUpdateContent: (fileId: string, content: string) => void
   onOpenImport: () => void
+  onRenameFile: (fileId: string, newName: string) => Promise<void>
+  onCloseTab: (fileId: string) => void
 }
 
 // File type colors matching VS Code conventions
@@ -51,11 +54,14 @@ function FileTypeIcon({ name }: { name: string }) {
 export function FilesScreen({
   files, folders, assets, activeFileId, uiState, onUiStateChange,
   onSelectFile, onCreateFile, onDeleteFile, onUpdateContent, onOpenImport,
+  onRenameFile, onCloseTab,
 }: FilesScreenProps) {
-  const { view, expandedFolderIds, isCreatingFile } = uiState
+  const { view, expandedFolderIds, isCreatingFile, openFileIds } = uiState
   const [newFileName, setNewFileName] = useState('')
   const [showMenuFor, setShowMenuFor] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [renamingFileId, setRenamingFileId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
 
   const activeFile = files.find((f) => f.id === activeFileId) ?? null
 
@@ -85,6 +91,34 @@ export function FilesScreen({
     onDeleteFile(file)
     setConfirmDeleteId(null)
     setShowMenuFor(null)
+  }
+
+  const handleRenameStart = (fileId: string) => {
+    setRenamingFileId(fileId)
+    const file = files.find(f => f.id === fileId)
+    setRenameValue(file?.name ?? '')
+    setShowMenuFor(null)
+  }
+
+  const handleRenameCommit = useCallback(async () => {
+    if (!renamingFileId) return
+    const trimmedName = renameValue.trim()
+    if (!trimmedName) {
+      setRenamingFileId(null)
+      setRenameValue('')
+      return
+    }
+    const file = files.find(f => f.id === renamingFileId)
+    if (file && trimmedName !== file.name) {
+      await onRenameFile(renamingFileId, trimmedName)
+    }
+    setRenamingFileId(null)
+    setRenameValue('')
+  }, [renamingFileId, renameValue, files, onRenameFile])
+
+  const handleRenameCancel = () => {
+    setRenamingFileId(null)
+    setRenameValue('')
   }
 
   // ── Tree view ─────────────────────────────────────────────────────────────
@@ -205,11 +239,17 @@ export function FilesScreen({
                     indent
                     showMenu={showMenuFor === file.id}
                     confirmDelete={confirmDeleteId === file.id}
+                    isRenaming={renamingFileId === file.id}
+                    renameValue={renameValue}
                     onOpen={() => { onSelectFile(file); setView('editor') }}
                     onMenuToggle={(e) => { e.stopPropagation(); setShowMenuFor(showMenuFor === file.id ? null : file.id) }}
                     onDeleteRequest={() => setConfirmDeleteId(file.id)}
                     onDeleteConfirm={() => handleDeleteConfirm(file)}
                     onDeleteCancel={() => setConfirmDeleteId(null)}
+                    onRenameStart={() => handleRenameStart(file.id)}
+                    onRenameChange={setRenameValue}
+                    onRenameCommit={handleRenameCommit}
+                    onRenameCancel={handleRenameCancel}
                   />
                 ))}
               </div>
@@ -224,11 +264,17 @@ export function FilesScreen({
               isActive={file.id === activeFileId}
               showMenu={showMenuFor === file.id}
               confirmDelete={confirmDeleteId === file.id}
+              isRenaming={renamingFileId === file.id}
+              renameValue={renameValue}
               onOpen={() => { onSelectFile(file); setView('editor') }}
               onMenuToggle={(e) => { e.stopPropagation(); setShowMenuFor(showMenuFor === file.id ? null : file.id) }}
               onDeleteRequest={() => setConfirmDeleteId(file.id)}
               onDeleteConfirm={() => handleDeleteConfirm(file)}
               onDeleteCancel={() => setConfirmDeleteId(null)}
+              onRenameStart={() => handleRenameStart(file.id)}
+              onRenameChange={setRenameValue}
+              onRenameCommit={handleRenameCommit}
+              onRenameCancel={handleRenameCancel}
             />
           ))}
 
@@ -279,8 +325,77 @@ export function FilesScreen({
 
   // ── Editor view ───────────────────────────────────────────────────────────
 
+  // Get open files for tabs
+  const openFiles = openFileIds.map(id => files.find(f => f.id === id)).filter(Boolean) as ProjectFile[]
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* Tab bar - show when multiple files are open */}
+      {openFiles.length > 1 && (
+        <div style={{
+          display: 'flex',
+          overflowX: 'auto',
+          scrollbarWidth: 'none',
+          background: '#0d0d0f',
+          borderBottom: '1px solid #1f1f23',
+          flexShrink: 0,
+        }}>
+          {openFiles.map(tabFile => {
+            const isActive = tabFile.id === activeFileId
+            return (
+              <div
+                key={tabFile.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '0 12px',
+                  height: '36px',
+                  minWidth: '80px',
+                  maxWidth: '140px',
+                  flexShrink: 0,
+                  background: isActive ? '#141416' : 'transparent',
+                  borderRight: '1px solid #1f1f23',
+                  borderBottom: isActive ? '2px solid #a855f7' : '2px solid transparent',
+                  cursor: 'pointer',
+                }}
+                onClick={() => onSelectFile(tabFile)}
+              >
+                <FileTypeIcon name={tabFile.name} />
+                <span style={{
+                  fontSize: '12px',
+                  color: isActive ? '#f0f0f2' : '#6d6d7a',
+                  fontFamily: 'monospace',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  flex: 1,
+                }}>
+                  {tabFile.name}
+                </span>
+                <button
+                  onClick={(e) => { e.stopPropagation();e.preventDefault(); onCloseTab(tabFile.id) }}
+                  style={{
+                    width: '16px',
+                    height: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderRadius: '3px',
+                    color: '#4a4a54',
+                    fontSize: '10px',
+                    flexShrink: 0,
+                    background: 'transparent',
+                  }}
+                >
+                  <X size={10} />
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
       {/* Editor header */}
       <div style={{
         height: '48px',
@@ -330,28 +445,11 @@ export function FilesScreen({
       {/* Editor body */}
       {activeFile ? (
         activeFile.type === 'text' ? (
-          <textarea
+          <CodeEditor
             key={activeFile.id}
-            defaultValue={activeFile.content}
-            onChange={(e) => onUpdateContent(activeFile.id, e.target.value)}
-            spellCheck={false}
-            autoCorrect="off"
-            autoCapitalize="off"
-            autoComplete="off"
-            style={{
-              flex: 1,
-              width: '100%',
-              background: '#0d0d0f',
-              color: '#d4d4d8',
-              fontFamily: "'Geist Mono', 'JetBrains Mono', 'Courier New', monospace",
-              fontSize: '13px',
-              lineHeight: 1.65,
-              padding: '16px',
-              border: 'none',
-              resize: 'none',
-              outline: 'none',
-              tabSize: 2,
-            }}
+            value={activeFile.content}
+            filename={activeFile.name}
+            onChange={(content) => onUpdateContent(activeFile.id, content)}
           />
         ) : (
           <div style={{
@@ -412,16 +510,24 @@ interface FileRowProps {
   indent?: boolean
   showMenu: boolean
   confirmDelete: boolean
+  isRenaming: boolean
+  renameValue: string
   onOpen: () => void
   onMenuToggle: (e: React.MouseEvent) => void
   onDeleteRequest: () => void
   onDeleteConfirm: () => void
   onDeleteCancel: () => void
+  onRenameStart: () => void
+  onRenameChange: (value: string) => void
+  onRenameCommit: () => void
+  onRenameCancel: () => void
 }
 
 function FileRow({
   file, isActive, indent, showMenu, confirmDelete,
+  isRenaming, renameValue,
   onOpen, onMenuToggle, onDeleteRequest, onDeleteConfirm, onDeleteCancel,
+  onRenameStart, onRenameChange, onRenameCommit, onRenameCancel,
 }: FileRowProps) {
   return (
     <div style={{
@@ -430,7 +536,7 @@ function FileRow({
       borderLeft: `2px solid ${isActive ? '#a855f7' : 'transparent'}`,
     }}>
       <div style={{ height: '44px', display: 'flex', alignItems: 'center', padding: `0 10px 0 ${indent ? 28 : 12}px`, gap: '8px' }}>
-        {/* File name — tap to open */}
+        {/* File name — tap to open or rename input */}
         <button
           onClick={onOpen}
           style={{
@@ -444,19 +550,45 @@ function FileRow({
           }}
         >
           <FileTypeIcon name={file.name} />
-          <span style={{
-            fontSize: '13px',
-            color: isActive ? '#f0f0f2' : '#a1a1aa',
-            fontWeight: isActive ? 500 : 400,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            flex: 1,
-            textAlign: 'left',
-            fontFamily: "'Geist Mono', monospace",
-          }}>
-            {file.name}
-          </span>
+          {isRenaming ? (
+            <input
+              autoFocus
+              value={renameValue}
+              onChange={(e) => onRenameChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') onRenameCommit()
+                if (e.key === 'Escape') onRenameCancel()
+                e.stopPropagation()
+              }}
+              onClick={(e) => e.stopPropagation()}
+              onBlur={onRenameCommit}
+              style={{
+                flex: 1,
+                background: '#1c1c1f',
+                border: '1px solid #a855f7',
+                borderRadius: '4px',
+                padding: '2px 6px',
+                color: '#f0f0f2',
+                fontSize: '13px',
+                outline: 'none',
+                fontFamily: "'Geist Mono', monospace",
+              }}
+            />
+          ) : (
+            <span style={{
+              fontSize: '13px',
+              color: isActive ? '#f0f0f2' : '#a1a1aa',
+              fontWeight: isActive ? 500 : 400,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              flex: 1,
+              textAlign: 'left',
+              fontFamily: "'Geist Mono', monospace",
+            }}>
+              {file.name}
+            </span>
+          )}
         </button>
 
         {/* More menu trigger */}
@@ -479,7 +611,7 @@ function FileRow({
       </div>
 
       {/* Context menu */}
-      {showMenu && !confirmDelete && (
+      {showMenu && !confirmDelete && !isRenaming && (
         <div style={{
           position: 'absolute',
           right: '8px',
@@ -492,6 +624,24 @@ function FileRow({
           overflow: 'hidden',
           boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
         }}>
+          <button
+            onClick={(e) => { e.stopPropagation(); onRenameStart() }}
+            style={{
+              width: '100%',
+              padding: '11px 14px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              color: '#f0f0f2',
+              fontSize: '13px',
+              fontWeight: 500,
+              borderBottom: '1px solid #2a2a30',
+              WebkitTapHighlightColor: 'transparent',
+            }}
+          >
+            <Pencil size={14} style={{ color: '#a855f7' }} />
+            Rename
+          </button>
           <button
             onClick={(e) => { e.stopPropagation(); onDeleteRequest() }}
             style={{
