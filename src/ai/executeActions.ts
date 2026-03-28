@@ -70,8 +70,23 @@ export async function executeActions(
     }
 
     try {
-      await executeAction(projectId, action)
-      results.push({ action, success: true })
+      // For update_file, capture the old content first (for diff view)
+      let enrichedAction = action
+      if (action.action === 'update_file' && !action.oldContent) {
+        try {
+          const existingFiles = await projectService.getProjectFiles(projectId)
+          const existingFile = existingFiles.find(
+            (f) => f.name.toLowerCase() === action.file.toLowerCase()
+          )
+          if (existingFile?.content) {
+            enrichedAction = { ...action, oldContent: existingFile.content }
+          }
+        } catch {
+          // Non-critical — proceed without oldContent
+        }
+      }
+      await executeAction(projectId, enrichedAction)
+      results.push({ action: enrichedAction, success: true })
     } catch (err: unknown) {
       const error = err instanceof Error ? err.message : String(err)
       results.push({ action, success: false, error })

@@ -15,6 +15,7 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { blink } from '../blink/client'
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, dropCursor, ViewPlugin, Decoration, WidgetType } from '@codemirror/view'
 import { EditorState, Extension, Prec, RangeSetBuilder } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo } from '@codemirror/commands'
@@ -892,68 +893,52 @@ export function CodeEditor({ value, filename, onChange, onSave, showSymbolToolba
     view.focus()
   }, [])
 
-  // Fetch AI suggestion for inline autocomplete
+  // Fetch AI suggestion for inline autocomplete using Blink AI
   const fetchSuggestion = useCallback(async (currentCode: string, cursorPosition: number) => {
     // Only fetch for supported file types
     if (!parser || !['html', 'css', 'javascript', 'typescript'].includes(parser)) {
       return
     }
 
-    // Get context around cursor
-    const lines = currentCode.split('\n')
-    let charCount = 0
-    let currentLine = 0
-    for (let i = 0; i < lines.length; i++) {
-      if (charCount + lines[i].length >= cursorPosition) {
-        currentLine = i
-        break
-      }
-      charCount += lines[i].length + 1
-    }
+    // Get context: 300 chars before cursor, 100 after
+    const before = currentCode.substring(Math.max(0, cursorPosition - 300), cursorPosition)
+    const after = currentCode.substring(cursorPosition, cursorPosition + 100)
 
-    // Get surrounding context (5 lines before and after)
-    const startLine = Math.max(0, currentLine - 5)
-    const endLine = Math.min(lines.length, currentLine + 5)
-    const context = lines.slice(startLine, endLine).join('\n')
+    // Skip if not enough context
+    if (before.trim().length < 10) return
 
-    // For demo purposes, generate a simple suggestion
-    // In a real implementation, this would call an AI API
     setIsFetchingSuggestion(true)
 
     try {
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 500))
+      const { text } = await blink.ai.generateText({
+        prompt: `You are a code autocomplete engine. Complete the ${parser} code at the cursor position.
+Return ONLY the completion text — no explanation, no markdown, no code block fences.
+Keep the completion short (max 80 characters, preferably a single line).
 
-      // Simple heuristic-based suggestions for demo
-      const currentLineText = lines[currentLine] || ''
-      let suggestedCompletion = ''
+Code before cursor:
+${before}
 
-      // HTML tag completion
-      if (currentLineText.trim().endsWith('<')) {
-        if (currentLineText.includes('<div')) {
-          suggestedCompletion = '></div>'
-        } else if (currentLineText.includes('<p')) {
-          suggestedCompletion = '></p>'
-        } else if (currentLineText.includes('<span')) {
-          suggestedCompletion = '></span>'
-        }
-      }
+Code after cursor:
+${after}
 
-      // CSS property completion
-      if (currentLineText.includes(':') && !currentLineText.includes(';')) {
-        suggestedCompletion = ';'
-      }
+Completion:`,
+        model: 'gpt-4.1-mini',
+        maxTokens: 60,
+        temperature: 0.2,
+      })
 
-      // JS function completion
-      if (currentLineText.includes('function') && !currentLineText.includes('{')) {
-        suggestedCompletion = ' { }'
-      }
-
-      if (suggestedCompletion) {
-        setSuggestion(suggestedCompletion)
+      const completion = text?.trim()
+      if (completion && completion.length > 0 && completion.length < 200) {
+        // Strip any accidental markdown fences
+        const clean = completion.replace(/^```[\w]*\n?/, '').replace(/\n?```$/, '').trim()
+        if (clean) setSuggestion(clean)
+        else setSuggestion(null)
       } else {
         setSuggestion(null)
       }
+    } catch {
+      // Silent fail — autocomplete is non-critical
+      setSuggestion(null)
     } finally {
       setIsFetchingSuggestion(false)
     }

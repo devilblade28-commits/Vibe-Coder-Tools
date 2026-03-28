@@ -20,6 +20,7 @@ import { SettingsScreen } from './ui/SettingsScreen'
 import { ModelSelector } from './ui/ModelSelector'
 import { ImportModal, type ImportResult } from './ui/ImportModal'
 import type { TabId, ProjectFile, AIFileAction, FileSystemUIState } from './types'
+import type { ProjectTemplate } from './data/templates'
 
 // Context hooks
 import { useWorkspace } from './workspace/WorkspaceContext'
@@ -329,6 +330,18 @@ export default function App() {
     ai.updateModel(provider, model)
   }, [ai])
   
+  // ─── Template Handler ────────────────────────────────────────────────────────
+  
+  const handleCreateFromTemplate = useCallback(async (template: ProjectTemplate) => {
+    if (!project) return
+    for (const file of template.files) {
+      await fileSystem.upsertFileByName(project.id, file.name, file.content)
+    }
+    await fileSystem.loadFullProject(project.id)
+    setPreviewRefreshTrigger(prev => prev + 1)
+    setActiveTab('files')
+  }, [project, fileSystem])
+  
   // ─── Reset All ───────────────────────────────────────────────────────────────
   
   const handleResetAll = useCallback(async () => {
@@ -398,6 +411,7 @@ export default function App() {
             onGoToSettings={() => setActiveTab('settings')}
             onApplyAction={handleApplyAction}
             onOpenImport={() => setShowImportModal(true)}
+            onCreateFromTemplate={handleCreateFromTemplate}
           />
         </div>
         
