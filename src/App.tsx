@@ -1,18 +1,14 @@
 /**
- * App - Main Application Component (Acode Editor UI)
+ * App - Main Application Component
  *
- * Layout: Acode-style mobile code editor
- *   Header → TabBar → EditorArea → StatusBar → Toolbar
- * File sidebar slides in from left on hamburger click.
+ * Layout: AppShell (header + bottom nav) wraps all tabs.
+ * Acode-style editor components live only inside the Files/editor tab.
  */
 
-import { useState, useCallback, useRef, useEffect } from 'react'
-import { AcodeHeader } from './ui/AcodeHeader'
-import { AcodeTabBar } from './ui/AcodeTabBar'
-import { AcodeStatusBar } from './ui/AcodeStatusBar'
-import { AcodeToolbar } from './ui/AcodeToolbar'
-import { FileSidebar } from './ui/FileSidebar'
-import { CodeEditor } from './ui/CodeEditor'
+import { useState, useCallback, useRef } from 'react'
+import { AppShell } from './ui/AppShell'
+import { Header } from './ui/Header'
+import { FilesScreen } from './ui/FilesScreen'
 import { ChatScreen } from './ui/ChatScreen'
 import { PreviewScreen } from './ui/PreviewScreen'
 import { SettingsScreen } from './ui/SettingsScreen'
@@ -26,7 +22,7 @@ import { useWorkspace } from './workspace/WorkspaceContext'
 import { useFileSystem } from './filesystem/FileSystemContext'
 import { useAI, type SendContext } from './ai/AIContext'
 
-// Services (for operations not in contexts)
+// Services
 import * as projectService from './workspace/projectService'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -49,9 +45,6 @@ export default function App() {
   const [showImportModal, setShowImportModal] = useState(false)
   const [showModelSelector, setShowModelSelector] = useState(false)
   const [previewRefreshTrigger, setPreviewRefreshTrigger] = useState(0)
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
-  const [cursorLine, setCursorLine] = useState(1)
-  const [cursorCol, setCursorCol] = useState(1)
   const [fsUiState, setFsUiState] = useState<FileSystemUIState>({
     view: 'editor',
     expandedFolderIds: [],
@@ -61,7 +54,6 @@ export default function App() {
 
   // Debounce timer for file content saves
   const saveTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
-  const lastUserMsgRef = useRef<string>('')
 
   // ─── Derived State ─────────────────────────────────────────────────────────
 
@@ -69,17 +61,6 @@ export default function App() {
   const files = fileSystem.files
   const folders = fileSystem.folders
   const assets = fileSystem.assets
-
-  const activeFile = files.find(f => f.id === project?.activeFileId) ?? null
-  const openFiles = fsUiState.openFileIds.map(id => files.find(f => f.id === id)).filter(Boolean) as ProjectFile[]
-
-  // ─── Effects ───────────────────────────────────────────────────────────────
-
-  useEffect(() => {
-    if (project?.activeFileId) {
-      setFsUiState(prev => ({ ...prev, view: 'editor' }))
-    }
-  }, [project?.activeFileId])
 
   // ─── Project Operations ─────────────────────────────────────────────────────
 
@@ -121,8 +102,6 @@ export default function App() {
 
   const handleSelectFile = useCallback(async (file: ProjectFile) => {
     if (!project) return
-    setIsSidebarOpen(false)
-    setActiveTab('files')
     setFsUiState(prev => {
       const isOpen = prev.openFileIds.includes(file.id)
       if (isOpen) return { ...prev, view: 'editor' }
@@ -236,7 +215,6 @@ export default function App() {
 
   const handleSend = useCallback(async (text: string) => {
     if (!project) return
-    lastUserMsgRef.current = text
     const context: SendContext = {
       projectId: project.id,
       projectContext: buildProjectContext(),
@@ -316,29 +294,6 @@ export default function App() {
     window.location.reload()
   }, [])
 
-  // ─── Toolbar actions ─────────────────────────────────────────────────────────
-
-  const dispatchEditorKey = (key: string) => {
-    const view = (window as any).__CM_VIEW
-    if (!view) return
-    // dispatch keyboard event to editor
-    const el = view.contentDOM as HTMLElement
-    el?.focus?.()
-    // Use CodeMirror window globals
-    const CM = (window as any).__CM
-    if (key === 'ArrowUp' && CM?.cursorLineUp) CM.cursorLineUp(view)
-    else if (key === 'ArrowDown' && CM?.cursorLineDown) CM.cursorLineDown(view)
-    else if (key === 'ArrowLeft') {
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
-    }
-    else if (key === 'ArrowRight') {
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
-    }
-    else if (key === 'Tab') {
-      document.dispatchEvent(new CustomEvent('cm-insert', { detail: '  ' }))
-    }
-  }
-
   // ─── Loading State ───────────────────────────────────────────────────────────
 
   if (workspace.isLoading) {
@@ -352,199 +307,101 @@ export default function App() {
     )
   }
 
-  // ─── Render ──────────────────────────────────────────────────────────────────
+  // ─── Derived for render ──────────────────────────────────────────────────────
 
   const activeProvider = ai.settings.activeProvider
   const activeModel = ai.settings.activeProvider === 'custom'
     ? ai.settings.customProvider.model
     : ai.settings.activeModel
 
-  // Show editor if on 'files' tab, else show chat/preview/settings
-  const showEditor = activeTab === 'files'
+  // ─── Render ──────────────────────────────────────────────────────────────────
 
   return (
     <>
       <style>{globalStyles}</style>
 
-      {/* File sidebar overlay */}
-      <FileSidebar
-        isOpen={isSidebarOpen}
-        files={files}
-        folders={folders}
-        activeFileId={project?.activeFileId ?? null}
-        projectName={project?.name ?? 'PROJECT'}
-        onSelectFile={handleSelectFile}
-        onClose={() => setIsSidebarOpen(false)}
-        onCreateFile={() => {
-          setIsSidebarOpen(false)
-          const name = prompt('File name (e.g. index.html):')
-          if (name) handleCreateFile(name)
-        }}
-        onOpenChat={() => { setIsSidebarOpen(false); setActiveTab('chat') }}
-        onOpenPreview={() => {
-          setIsSidebarOpen(false)
-          setHasVisitedPreview(true)
-          setPreviewRefreshTrigger(p => p + 1)
-          setActiveTab('preview')
-        }}
-        onOpenSettings={() => { setIsSidebarOpen(false); setActiveTab('settings') }}
-      />
-
-      {/* Main app */}
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          height: '100dvh',
-          maxWidth: '430px',
-          margin: '0 auto',
-          background: '#0d0d0f',
-          overflow: 'hidden',
-        }}
-      >
-        {/* ── Header ───────────────────────────────────────────────── */}
-        <AcodeHeader
-          activeFile={activeFile}
-          onHamburgerClick={() => setIsSidebarOpen(v => !v)}
-          onSearchClick={() => setActiveTab('files')}
-          onPlayClick={() => {
+      <AppShell
+        activeTab={activeTab}
+        onTabChange={(tab) => {
+          if (tab === 'preview') {
             setHasVisitedPreview(true)
             setPreviewRefreshTrigger(p => p + 1)
-            setActiveTab('preview')
-          }}
-          onMoreClick={() => setActiveTab('settings')}
-        />
-
-        {/* ── Tab bar (only in editor mode) ────────────────────────── */}
-        {showEditor && openFiles.length > 0 && (
-          <AcodeTabBar
-            openFiles={openFiles}
+          }
+          setActiveTab(tab)
+        }}
+        header={
+          <Header
+            projectName={project?.name ?? 'Project'}
+            onRenameProject={handleRenameProject}
+            activeProvider={activeProvider}
+            activeModel={activeModel}
+            customProviderLabel={ai.settings.customProvider.label}
+            onOpenModelSelector={() => setShowModelSelector(true)}
+            onOpenSettings={() => setActiveTab('settings')}
+          />
+        }
+      >
+        {/* ── Files / Editor tab ─────────────────────────────────────── */}
+        {activeTab === 'files' && (
+          <FilesScreen
+            files={files}
+            folders={folders}
+            assets={assets}
             activeFileId={project?.activeFileId ?? null}
+            uiState={fsUiState}
+            onUiStateChange={setFsUiState}
             onSelectFile={handleSelectFile}
+            onCreateFile={handleCreateFile}
+            onDeleteFile={handleDeleteFile}
+            onUpdateContent={handleUpdateContent}
+            onOpenImport={() => setShowImportModal(true)}
+            onRenameFile={handleRenameFile}
             onCloseTab={handleCloseTab}
           />
         )}
 
-        {/* ── Content area ─────────────────────────────────────────── */}
-        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-
-          {/* Files / Editor */}
-          {showEditor && (
-            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-              {activeFile && activeFile.type === 'text' ? (
-                <CodeEditor
-                  key={activeFile.id}
-                  value={activeFile.content}
-                  filename={activeFile.name}
-                  onChange={(content) => handleUpdateContent(activeFile.id, content)}
-                  onCursorChange={(ln, col) => { setCursorLine(ln); setCursorCol(col) }}
-                  showSymbolToolbar={false}
-                />
-              ) : activeFile && activeFile.type !== 'text' ? (
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#6d6d7a', padding: '32px', textAlign: 'center' }}>
-                  <div style={{ fontSize: '32px', marginBottom: '12px', opacity: 0.25 }}>🖼️</div>
-                  <p style={{ fontSize: '14px', fontWeight: 500, color: '#6d6d7a', margin: '0 0 4px' }}>Binary asset</p>
-                  <p style={{ fontSize: '12px', color: '#4a4a54', margin: 0 }}>{activeFile.name}</p>
-                </div>
-              ) : (
-                /* No file selected */
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', padding: '32px', textAlign: 'center' }}>
-                  <div style={{ fontSize: '48px', opacity: 0.15 }}>📄</div>
-                  <p style={{ fontSize: '15px', color: '#6d6d7a', margin: 0 }}>No file open</p>
-                  <p style={{ fontSize: '13px', color: '#4a4a54', margin: 0, lineHeight: 1.5 }}>
-                    Tap <strong style={{ color: '#d4d4d4' }}>☰</strong> to browse files
-                  </p>
-                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                    <button
-                      onClick={() => setIsSidebarOpen(true)}
-                      style={{ padding: '10px 20px', background: '#1c1c1f', border: '1px solid #2a2a30', borderRadius: '8px', color: '#d4d4d4', fontSize: '13px' }}
-                    >
-                      Browse files
-                    </button>
-                    <button
-                      onClick={() => setActiveTab('chat')}
-                      style={{ padding: '10px 20px', background: '#2d1b69', border: '1px solid #4a2f8a', borderRadius: '8px', color: '#c4b5fd', fontSize: '13px', fontWeight: 600 }}
-                    >
-                      Ask AI
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Chat */}
-          {activeTab === 'chat' && (
-            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-              <ChatScreen
-                messages={ai.messages}
-                isStreaming={ai.isStreaming}
-                onSend={handleSend}
-                onStop={handleStop}
-                onRetry={handleRetry}
-                error={ai.error}
-                hasApiKey={ai.hasApiKey}
-                onGoToSettings={() => setActiveTab('settings')}
-                onApplyAction={handleApplyAction}
-                onOpenImport={() => setShowImportModal(true)}
-                onCreateFromTemplate={handleCreateFromTemplate}
-              />
-            </div>
-          )}
-
-          {/* Preview */}
-          {activeTab === 'preview' && (
-            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-              {hasVisitedPreview && (
-                <PreviewScreen
-                  files={files}
-                  assets={assets}
-                  refreshTrigger={previewRefreshTrigger}
-                />
-              )}
-            </div>
-          )}
-
-          {/* Settings */}
-          {activeTab === 'settings' && (
-            <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
-              <SettingsScreen
-                settings={ai.settings}
-                projectName={project?.name ?? ''}
-                fileCount={files.length}
-                onUpdateProvider={ai.updateProvider}
-                onUpdateModel={ai.updateModel}
-                onUpdateApiKey={ai.updateApiKey}
-                onUpdateSystemInstruction={ai.updateCustomInstruction}
-                onUpdateCustomProvider={ai.updateCustomProvider}
-                onDeleteProject={handleDeleteProject}
-                onResetAll={handleResetAll}
-              />
-            </div>
-          )}
-        </div>
-
-        {/* ── Status bar (only in editor mode) ─────────────────────── */}
-        {showEditor && (
-          <AcodeStatusBar
-            line={cursorLine}
-            col={cursorCol}
-            language={activeFile?.name ?? ''}
+        {/* ── Chat tab ────────────────────────────────────────────────── */}
+        {activeTab === 'chat' && (
+          <ChatScreen
+            messages={ai.messages}
+            isStreaming={ai.isStreaming}
+            onSend={handleSend}
+            onStop={handleStop}
+            onRetry={handleRetry}
+            error={ai.error}
+            hasApiKey={ai.hasApiKey}
+            onGoToSettings={() => setActiveTab('settings')}
+            onApplyAction={handleApplyAction}
+            onOpenImport={() => setShowImportModal(true)}
+            onCreateFromTemplate={handleCreateFromTemplate}
           />
         )}
 
-        {/* ── Bottom toolbar ────────────────────────────────────────── */}
-        <AcodeToolbar
-          onTabIndent={() => { document.dispatchEvent(new CustomEvent('cm-insert', { detail: '  ' })) }}
-          onArrowUp={() => dispatchEditorKey('ArrowUp')}
-          onArrowDown={() => dispatchEditorKey('ArrowDown')}
-          onArrowLeft={() => dispatchEditorKey('ArrowLeft')}
-          onArrowRight={() => dispatchEditorKey('ArrowRight')}
-          onAIClick={() => setActiveTab('chat')}
-          onCommandClick={() => setShowModelSelector(true)}
-          onExpandClick={() => setActiveTab(prev => prev === 'chat' ? 'files' : 'chat')}
-        />
-      </div>
+        {/* ── Preview tab ─────────────────────────────────────────────── */}
+        {activeTab === 'preview' && hasVisitedPreview && (
+          <PreviewScreen
+            files={files}
+            assets={assets}
+            refreshTrigger={previewRefreshTrigger}
+          />
+        )}
+
+        {/* ── Settings tab ────────────────────────────────────────────── */}
+        {activeTab === 'settings' && (
+          <SettingsScreen
+            settings={ai.settings}
+            projectName={project?.name ?? ''}
+            fileCount={files.length}
+            onUpdateProvider={ai.updateProvider}
+            onUpdateModel={ai.updateModel}
+            onUpdateApiKey={ai.updateApiKey}
+            onUpdateSystemInstruction={ai.updateCustomInstruction}
+            onUpdateCustomProvider={ai.updateCustomProvider}
+            onDeleteProject={handleDeleteProject}
+            onResetAll={handleResetAll}
+          />
+        )}
+      </AppShell>
 
       {showModelSelector && (
         <ModelSelector
