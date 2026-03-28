@@ -1,23 +1,16 @@
 import React, { useState, useCallback } from 'react'
 import {
   FilePlus, ChevronRight, ChevronDown,
-  MoreHorizontal, ChevronLeft, FileText, Image, Folder, Upload, X, Pencil, Split, Columns,
+  MoreHorizontal, FileText, Image, Folder, Upload, X, Pencil,
 } from 'lucide-react'
 import type { ProjectFile, ProjectFolder, ProjectAsset, FileSystemUIState } from '../types'
 import { getFileExtension } from '../workspace/projectService'
 import { CodeEditor } from './CodeEditor'
-import { SymbolToolbar } from './SymbolToolbar'
-
-// Helper function to get language from filename
-function getLanguageFromFilename(filename: string): string {
-  const ext = filename.split('.').pop()?.toLowerCase() ?? ''
-  if (['html', 'htm'].includes(ext)) return 'html'
-  if (['css', 'scss', 'less'].includes(ext)) return 'css'
-  if (['js', 'jsx', 'ts', 'tsx'].includes(ext)) return 'javascript'
-  if (['json'].includes(ext)) return 'json'
-  if (['md', 'markdown'].includes(ext)) return 'markdown'
-  return 'text'
-}
+import { AcodeHeader } from './AcodeHeader'
+import { AcodeTabBar } from './AcodeTabBar'
+import { AcodeStatusBar } from './AcodeStatusBar'
+import { AcodeToolbar } from './AcodeToolbar'
+import { FileSidebar } from './FileSidebar'
 
 // File type colors matching VS Code conventions
 const FILE_COLORS: Record<string, string> = {
@@ -47,29 +40,6 @@ function FileTypeIcon({ name }: { name: string }) {
   return <FileText size={15} style={{ color, flexShrink: 0 }} />
 }
 
-// Build breadcrumb path from file and folders
-function buildBreadcrumb(file: ProjectFile, folders: ProjectFolder[]): string[] {
-  const path: string[] = []
-  
-  // Find folder chain
-  let currentFolderId = file.folderId
-  const folderMap = new Map(folders.map(f => [f.id, f]))
-  
-  while (currentFolderId) {
-    const folder = folderMap.get(currentFolderId)
-    if (folder) {
-      path.unshift(folder.name)
-      currentFolderId = folder.parentId
-    } else {
-      break
-    }
-  }
-  
-  // Add filename
-  path.push(file.name)
-  
-  return path
-}
 
 interface FilesScreenProps {
   files: ProjectFile[]
@@ -85,12 +55,15 @@ interface FilesScreenProps {
   onOpenImport: () => void
   onRenameFile: (fileId: string, newName: string) => Promise<void>
   onCloseTab: (fileId: string) => void
+  onOpenPreview?: () => void
+  onOpenChat?: () => void
+  projectName?: string
 }
 
 export function FilesScreen({
   files, folders, assets, activeFileId, uiState, onUiStateChange,
   onSelectFile, onCreateFile, onDeleteFile, onUpdateContent, onOpenImport,
-  onRenameFile, onCloseTab,
+  onRenameFile, onCloseTab, onOpenPreview, onOpenChat, projectName = 'PROJECT',
 }: FilesScreenProps) {
   const { view, expandedFolderIds, isCreatingFile, openFileIds } = uiState
   const [newFileName, setNewFileName] = useState('')
@@ -99,13 +72,13 @@ export function FilesScreen({
   const [renamingFileId, setRenamingFileId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
 
+  // Acode editor state
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+  const [cursorLine, setCursorLine] = useState(1)
+  const [cursorCol, setCursorCol] = useState(1)
+
   const activeFile = files.find((f) => f.id === activeFileId) ?? null
   
-  // Split view state
-  const [isSplitView, setIsSplitView] = useState(false)
-  const [splitViewFileId, setSplitViewFileId] = useState<string | null>(null)
-  const splitFile = files.find((f) => f.id === splitViewFileId) ?? null
-
   const setView = (v: 'tree' | 'editor' | 'split') => onUiStateChange({ ...uiState, view: v })
   const toggleFolder = (id: string) => {
     const next = expandedFolderIds.includes(id)
@@ -160,6 +133,24 @@ export function FilesScreen({
   const handleRenameCancel = () => {
     setRenamingFileId(null)
     setRenameValue('')
+  }
+
+  // Toolbar cursor dispatch
+  const dispatchEditorKey = (key: string) => {
+    const view = (window as any).__CM_VIEW
+    if (!view) return
+    const el = view.contentDOM as HTMLElement
+    el?.focus?.()
+    const CM = (window as any).__CM
+    if (key === 'ArrowUp' && CM?.cursorLineUp) CM.cursorLineUp(view)
+    else if (key === 'ArrowDown' && CM?.cursorLineDown) CM.cursorLineDown(view)
+    else if (key === 'ArrowLeft') {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
+    } else if (key === 'ArrowRight') {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    } else if (key === 'Tab') {
+      document.dispatchEvent(new CustomEvent('cm-insert', { detail: '  ' }))
+    }
   }
 
   // ── Tree view ─────────────────────────────────────────────────────────────
@@ -364,284 +355,130 @@ export function FilesScreen({
     )
   }
 
-  // ── Editor view ───────────────────────────────────────────────────────────
+  // ── Editor view (Acode-style) ──────────────────────────────────────────────
 
-  // Get open files for tabs
   const openFiles = openFileIds.map(id => files.find(f => f.id === id)).filter(Boolean) as ProjectFile[]
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* Tab bar - show when multiple files are open */}
-      {openFiles.length > 1 && (
-        <div style={{
-          display: 'flex',
-          overflowX: 'auto',
-          scrollbarWidth: 'none',
-          background: '#0d0d0f',
-          borderBottom: '1px solid #1f1f23',
-          flexShrink: 0,
-        }}>
-          {openFiles.map(tabFile => {
-            const isActive = tabFile.id === activeFileId
-            return (
-              <div
-                key={tabFile.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '0 12px',
-                  height: '36px',
-                  minWidth: '80px',
-                  maxWidth: '140px',
-                  flexShrink: 0,
-                  background: isActive ? '#141416' : 'transparent',
-                  borderRight: '1px solid #1f1f23',
-                  borderBottom: isActive ? '2px solid #a855f7' : '2px solid transparent',
-                  cursor: 'pointer',
-                }}
-                onClick={() => onSelectFile(tabFile)}
-              >
-                <FileTypeIcon name={tabFile.name} />
-                <span style={{
-                  fontSize: '12px',
-                  color: isActive ? '#f0f0f2' : '#6d6d7a',
-                  fontFamily: 'monospace',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  flex: 1,
-                }}>
-                  {tabFile.name}
-                </span>
-                <button
-                  onClick={(e) => { e.stopPropagation();e.preventDefault(); onCloseTab(tabFile.id) }}
-                  style={{
-                    width: '16px',
-                    height: '16px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    borderRadius: '3px',
-                    color: '#4a4a54',
-                    fontSize: '10px',
-                    flexShrink: 0,
-                    background: 'transparent',
-                  }}
-                >
-                  <X size={10} />
-                </button>
-              </div>
-            )
-          })}
-        </div>
-      )}
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#0d0d0f' }}>
 
-      {/* Editor header */}
-      <div style={{
-        height: '48px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '6px',
-        padding: '0 6px 0 10px',
-        borderBottom: '1px solid #1f1f23',
-        background: '#141416',
-        flexShrink: 0,
-      }}>
-        <button
-          onClick={() => setView('tree')}
-          style={{
-            width: '40px', height: '40px',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            borderRadius: '8px', color: '#8b8b96',
-            WebkitTapHighlightColor: 'transparent',
-          }}
-        >
-          <ChevronLeft size={20} />
-        </button>
+      {/* File sidebar overlay */}
+      <FileSidebar
+        isOpen={isSidebarOpen}
+        files={files}
+        folders={folders}
+        activeFileId={activeFileId}
+        projectName={projectName}
+        onSelectFile={(file) => {
+          onSelectFile(file)
+          setIsSidebarOpen(false)
+        }}
+        onClose={() => setIsSidebarOpen(false)}
+        onCreateFile={() => {
+          setIsSidebarOpen(false)
+          const name = prompt('File name (e.g. index.html):')
+          if (name) onCreateFile(name)
+        }}
+        onOpenChat={() => {
+          setIsSidebarOpen(false)
+          onOpenChat?.()
+        }}
+        onOpenPreview={() => {
+          setIsSidebarOpen(false)
+          onOpenPreview?.()
+        }}
+        onOpenSettings={() => {
+          setIsSidebarOpen(false)
+        }}
+      />
+
+      {/* Acode Header */}
+      <AcodeHeader
+        activeFile={activeFile}
+        onHamburgerClick={() => setIsSidebarOpen(v => !v)}
+        onSearchClick={() => setView('tree')}
+        onPlayClick={() => onOpenPreview?.()}
+        onMoreClick={() => setView('tree')}
+      />
+
+      {/* Acode Tab Bar */}
+      <AcodeTabBar
+        openFiles={openFiles}
+        activeFileId={activeFileId}
+        onSelectFile={onSelectFile}
+        onCloseTab={onCloseTab}
+      />
+
+      {/* Editor body — flex:1 */}
+      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {activeFile ? (
-          <>
-            <FileTypeIcon name={activeFile.name} />
-            {/* Breadcrumb path */}
-            <div style={{
-              flex: 1,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              overflow: 'hidden',
-              minWidth: 0,
-            }}>
-              {buildBreadcrumb(activeFile, folders).map((part, i, arr) => (
-                <React.Fragment key={i}>
-                  <span style={{
-                    fontSize: '13px',
-                    fontWeight: i === arr.length - 1 ? 500 : 400,
-                    color: i === arr.length - 1 ? '#f0f0f2' : '#6d6d7a',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                  }}>
-                    {part}
-                  </span>
-                  {i < arr.length - 1 && (
-                    <ChevronRight size={12} style={{ color: '#4a4a54', flexShrink: 0 }} />
-                  )}
-                </React.Fragment>
-              ))}
-            </div>
-            <span style={{ fontSize: '11px', color: '#3d3d45', flexShrink: 0, paddingRight: '4px' }}>
-              {activeFile.type === 'text' ? `${(activeFile.size / 1024).toFixed(1)} KB` : activeFile.mimeType}
-            </span>
-          </>
-        ) : (
-          <span style={{ flex: 1, fontSize: '13px', color: '#6d6d7a' }}>No file selected</span>
-        )}
-        {/* Split view toggle */}
-        {activeFile && activeFile.type === 'text' && (
-          <button
-            onClick={() => setIsSplitView(!isSplitView)}
-            title={isSplitView ? 'Close split view' : 'Open split view'}
-            style={{
-              width: '32px', height: '32px',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              borderRadius: '6px', color: isSplitView ? '#a855f7' : '#6d6d7a',
-              background: isSplitView ? 'rgba(168, 85, 247, 0.15)' : 'transparent',
-              border: '1px solid #2a2a30',
-              WebkitTapHighlightColor: 'transparent',
-            }}
-          >
-            <Columns size={14} />
-          </button>
-        )}
-      </div>
-
-      {/* Split view file selector */}
-      {isSplitView && activeFile && (
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          padding: '8px 12px',
-          background: '#0d0d0f',
-          borderBottom: '1px solid #1f1f23',
-          flexShrink: 0,
-        }}>
-          <span style={{ fontSize: '11px', color: '#4a4a54' }}>Split with:</span>
-          <select
-            value={splitViewFileId ?? ''}
-            onChange={(e) => setSplitViewFileId(e.target.value || null)}
-            style={{
-              flex: 1,
-              background: '#1c1c1f',
-              border: '1px solid #2a2a30',
-              borderRadius: '6px',
-              padding: '6px 10px',
-              color: '#f0f0f2',
-              fontSize: '12px',
-              outline: 'none',
-            }}
-          >
-            <option value="">Select file...</option>
-            {files.filter(f => f.type === 'text' && f.id !== activeFile.id).map(f => (
-              <option key={f.id} value={f.id}>{f.name}</option>
-            ))}
-          </select>
-          {splitFile && (
-            <button
-              onClick={() => setSplitViewFileId(null)}
-              style={{
-                padding: '4px 8px',
-                background: '#1c1c1f',
-                border: '1px solid #2a2a30',
-                borderRadius: '4px',
-                color: '#6d6d7a',
-                fontSize: '11px',
-              }}
-            >
-              Clear
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Editor body */}
-      {activeFile ? (
-        activeFile.type === 'text' ? (
-          isSplitView && splitFile ? (
-            /* Split view with two editors */
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-              <div style={{ flex: 1, overflow: 'hidden', borderBottom: '1px solid #1f1f23' }}>
-                <CodeEditor
-                  key={activeFile.id}
-                  value={activeFile.content}
-                  filename={activeFile.name}
-                  onChange={(content) => onUpdateContent(activeFile.id, content)}
-                />
-              </div>
-              <div style={{ flex: 1, overflow: 'hidden' }}>
-                <CodeEditor
-                  key={splitFile.id}
-                  value={splitFile.content}
-                  filename={splitFile.name}
-                  onChange={(content) => onUpdateContent(splitFile.id, content)}
-                />
-              </div>
-            </div>
-          ) : (
+          activeFile.type === 'text' ? (
             <CodeEditor
               key={activeFile.id}
               value={activeFile.content}
               filename={activeFile.name}
               onChange={(content) => onUpdateContent(activeFile.id, content)}
+              onCursorChange={(ln, col) => { setCursorLine(ln); setCursorCol(col) }}
+              showSymbolToolbar={false}
             />
+          ) : (
+            <div style={{
+              flex: 1, display: 'flex', flexDirection: 'column',
+              alignItems: 'center', justifyContent: 'center',
+              color: '#6d6d7a', padding: '32px', textAlign: 'center',
+            }}>
+              <div style={{ fontSize: '32px', marginBottom: '12px', opacity: 0.25 }}>🖼️</div>
+              <p style={{ fontSize: '14px', fontWeight: 500, color: '#6d6d7a', margin: '0 0 4px' }}>Binary asset</p>
+              <p style={{ fontSize: '12px', color: '#4a4a54', margin: 0 }}>{activeFile.name}</p>
+            </div>
           )
         ) : (
           <div style={{
-            flex: 1,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '10px',
-            color: '#6d6d7a',
-            padding: '32px',
-            textAlign: 'center',
+            flex: 1, display: 'flex', flexDirection: 'column',
+            alignItems: 'center', justifyContent: 'center',
+            gap: '16px', padding: '32px', textAlign: 'center',
           }}>
-            <Image size={36} style={{ color: '#3d3d45' }} />
-            <p style={{ fontSize: '14px', fontWeight: 500, color: '#6d6d7a', margin: 0 }}>Binary asset</p>
-            <p style={{ fontSize: '12px', color: '#4a4a54', margin: 0 }}>{activeFile.name}</p>
-            <p style={{ fontSize: '11px', color: '#3d3d45', margin: 0 }}>{activeFile.mimeType} · {(activeFile.size / 1024).toFixed(1)} KB</p>
+            <div style={{ fontSize: '48px', opacity: 0.15 }}>📄</div>
+            <p style={{ fontSize: '15px', color: '#6d6d7a', margin: 0 }}>No file open</p>
+            <p style={{ fontSize: '13px', color: '#4a4a54', margin: 0, lineHeight: 1.5 }}>
+              Tap <strong style={{ color: '#d4d4d4' }}>☰</strong> to browse files
+            </p>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'center' }}>
+              <button
+                onClick={() => setIsSidebarOpen(true)}
+                style={{ padding: '10px 20px', background: '#1c1c1f', border: '1px solid #2a2a30', borderRadius: '8px', color: '#d4d4d4', fontSize: '13px' }}
+              >
+                Browse files
+              </button>
+              <button
+                onClick={() => onOpenChat?.()}
+                style={{ padding: '10px 20px', background: '#2d1b69', border: '1px solid #4a2f8a', borderRadius: '8px', color: '#c4b5fd', fontSize: '13px', fontWeight: 600 }}
+              >
+                Ask AI
+              </button>
+            </div>
           </div>
-        )
-      ) : (
-        <div style={{
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '12px',
-          color: '#4a4a54',
-          padding: '32px',
-          textAlign: 'center',
-        }}>
-          <FileText size={32} style={{ color: '#3d3d45' }} />
-          <p style={{ fontSize: '14px', margin: 0 }}>Select a file to edit</p>
-          <button
-            onClick={() => setView('tree')}
-            style={{
-              padding: '8px 16px',
-              background: '#1c1c1f',
-              border: '1px solid #2a2a30',
-              borderRadius: '8px',
-              color: '#8b8b96',
-              fontSize: '13px',
-            }}
-          >
-            Browse files
-          </button>
-        </div>
-      )}
+        )}
+      </div>
+
+      {/* Acode Status Bar */}
+      <AcodeStatusBar
+        line={cursorLine}
+        col={cursorCol}
+        language={activeFile?.name ?? ''}
+      />
+
+      {/* Acode Toolbar */}
+      <AcodeToolbar
+        onTabIndent={() => { document.dispatchEvent(new CustomEvent('cm-insert', { detail: '  ' })) }}
+        onArrowUp={() => dispatchEditorKey('ArrowUp')}
+        onArrowDown={() => dispatchEditorKey('ArrowDown')}
+        onArrowLeft={() => dispatchEditorKey('ArrowLeft')}
+        onArrowRight={() => dispatchEditorKey('ArrowRight')}
+        onAIClick={() => onOpenChat?.()}
+        onCommandClick={() => setIsSidebarOpen(true)}
+        onExpandClick={() => setView('tree')}
+      />
     </div>
   )
 }

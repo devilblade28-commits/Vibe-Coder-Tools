@@ -357,6 +357,13 @@ export default function App() {
             onOpenImport={() => setShowImportModal(true)}
             onRenameFile={handleRenameFile}
             onCloseTab={handleCloseTab}
+            projectName={project?.name ?? 'PROJECT'}
+            onOpenPreview={() => {
+              setHasVisitedPreview(true)
+              setPreviewRefreshTrigger(p => p + 1)
+              setActiveTab('preview')
+            }}
+            onOpenChat={() => setActiveTab('chat')}
           />
         )}
 
