@@ -139,6 +139,7 @@ interface CodeEditorProps {
   onChange: (content: string) => void
   onSave?: () => void
   showSymbolToolbar?: boolean
+  onCursorChange?: (line: number, col: number) => void
 }
 
 // Symbol groups for quick insert (mobile-friendly)
@@ -711,7 +712,7 @@ function getLanguageExtension(filename: string): Extension[] {
 
 // ─── Main Component ─────────────────────────────────────────────────────────
 
-export function CodeEditor({ value, filename, onChange, onSave, showSymbolToolbar = true }: CodeEditorProps) {
+export function CodeEditor({ value, filename, onChange, onSave, showSymbolToolbar = true, onCursorChange }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -748,6 +749,12 @@ export function CodeEditor({ value, filename, onChange, onSave, showSymbolToolba
     const updateListener = EditorView.updateListener.of((update) => {
       if (update.docChanged) {
         debouncedOnChange(update.state.doc.toString())
+      }
+      if (update.selectionSet || update.docChanged) {
+        const st = update.state
+        const pos = st.selection.main.head
+        const ln = st.doc.lineAt(pos)
+        onCursorChange?.(ln.number, pos - ln.from + 1)
       }
     })
 
