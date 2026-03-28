@@ -19,13 +19,12 @@ import { PreviewScreen } from './ui/PreviewScreen'
 import { SettingsScreen } from './ui/SettingsScreen'
 import { ModelSelector } from './ui/ModelSelector'
 import { ImportModal, type ImportResult } from './ui/ImportModal'
-import type { TabId, ProjectFile, ProjectFolder, ProjectAsset, AIFileAction, FileSystemUIState } from './types'
+import type { TabId, ProjectFile, AIFileAction, FileSystemUIState } from './types'
 
 // Context hooks
 import { useWorkspace } from './workspace/WorkspaceContext'
 import { useFileSystem } from './filesystem/FileSystemContext'
 import { useAI, type SendContext } from './ai/AIContext'
-import { usePreview } from './preview/PreviewContext'
 
 // Services (for operations not in contexts)
 import * as projectService from './workspace/projectService'
@@ -42,7 +41,6 @@ export default function App() {
   const workspace = useWorkspace()
   const fileSystem = useFileSystem()
   const ai = useAI()
-  const preview = usePreview()
   
   // ─── Local UI State ───────────────────────────────────────────────────────
   
@@ -50,6 +48,7 @@ export default function App() {
   const [hasVisitedPreview, setHasVisitedPreview] = useState(false)
   const [showImportModal, setShowImportModal] = useState(false)
   const [showModelSelector, setShowModelSelector] = useState(false)
+  const [previewRefreshTrigger, setPreviewRefreshTrigger] = useState(0)
   const [fsUiState, setFsUiState] = useState<FileSystemUIState>({
     view: 'tree',
     expandedFolderIds: [],
@@ -76,13 +75,6 @@ export default function App() {
     }
   }, [project?.activeFileId])
   
-  // Rebuild preview when files/assets change
-  useEffect(() => {
-    if (files.length > 0 || assets.length > 0) {
-      preview.rebuild(files, assets)
-    }
-  }, [files, assets, preview])
-  
   // ─── Project Operations ─────────────────────────────────────────────────────
   
   const handleRenameProject = useCallback(async (name: string) => {
@@ -108,6 +100,7 @@ export default function App() {
       const template = projectService.getFileTemplate(name)
       const file = await fileSystem.createFile(project.id, { name, content: template })
       await workspace.updateActiveProject({ activeFileId: file.id })
+      setPreviewRefreshTrigger(prev => prev + 1)
       setFsUiState(prev => ({ ...prev, view: 'editor', isCreatingFile: false }))
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -129,6 +122,7 @@ export default function App() {
       delete saveTimerRef.current[file.id]
     }
     await fileSystem.deleteFile(file.id)
+    setPreviewRefreshTrigger(prev => prev + 1)
     
     const remaining = files.filter(f => f.id !== file.id)
     const newActiveId = project.activeFileId === file.id
@@ -149,20 +143,16 @@ export default function App() {
    * Updates in-memory state immediately, debounces the storage write.
    */
   const handleUpdateContent = useCallback((fileId: string, content: string) => {
-    // Optimistic in-memory update (fileSystem already handles this)
     const file = files.find(f => f.id === fileId)
     if (!file) return
-    
-    // Update file in context (optimistic)
-    fileSystem.updateFile({ ...file, content }, content)
-    
-    // Debounce IDB write
+
+    fileSystem.setFileContentLocally(fileId, content)
+
     if (saveTimerRef.current[fileId]) clearTimeout(saveTimerRef.current[fileId])
     saveTimerRef.current[fileId] = setTimeout(async () => {
-      const fileInState = fileSystem.files.find(f => f.id === fileId)
-      if (!fileInState) return
+      const latestFile = fileSystem.files.find(f => f.id === fileId) ?? file
       try {
-        await fileSystem.updateFile(fileInState, fileInState.content)
+        await fileSystem.updateFile(latestFile, content)
       } catch (err) {
         console.error('Failed to save file content:', err)
       }
@@ -188,6 +178,7 @@ export default function App() {
     }
     
     await fileSystem.loadFullProject(project.id)
+    setPreviewRefreshTrigger(prev => prev + 1)
     setActiveTab('files')
   }, [project, assets, fileSystem])
   
@@ -213,9 +204,9 @@ export default function App() {
     const context: SendContext = {
       projectId: project.id,
       projectContext: buildProjectContext(),
-      onActionsExecuted: async (results) => {
-        // Reload files after actions are executed
+      onActionsExecuted: async () => {
         await fileSystem.loadFullProject(project.id)
+        setPreviewRefreshTrigger(prev => prev + 1)
         setActiveTab('files')
       }
     }
@@ -234,6 +225,7 @@ export default function App() {
       projectContext: buildProjectContext(),
       onActionsExecuted: async () => {
         await fileSystem.loadFullProject(project.id)
+        setPreviewRefreshTrigger(prev => prev + 1)
         setActiveTab('files')
       }
     }
@@ -255,6 +247,7 @@ export default function App() {
       
       if (result.success) {
         await fileSystem.loadFullProject(project.id)
+        setPreviewRefreshTrigger(prev => prev + 1)
         return { success: true }
       } else {
         return { success: false, error: result.error }
@@ -310,7 +303,10 @@ export default function App() {
       <AppShell
         activeTab={activeTab}
         onTabChange={(tab) => {
-          if (tab === 'preview') setHasVisitedPreview(true)
+          if (tab === 'preview') {
+            setHasVisitedPreview(true)
+            setPreviewRefreshTrigger(prev => prev + 1)
+          }
           setActiveTab(tab)
         }}
         header={
@@ -364,7 +360,7 @@ export default function App() {
             <PreviewScreen
               files={files}
               assets={assets}
-              refreshTrigger={preview.refreshTrigger}
+              refreshTrigger={previewRefreshTrigger}
             />
           )}
         </div>

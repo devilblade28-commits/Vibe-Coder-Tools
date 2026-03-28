@@ -27,7 +27,7 @@ interface WorkspaceContextValue extends WorkspaceState {
   
   // Active project management
   setActiveProject: (project: Project | null) => void
-  updateActiveProject: (updates: Partial<Project>) => void
+  updateActiveProject: (updates: Partial<Project>) => Promise<Project | null>
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null)
@@ -60,7 +60,8 @@ export function WorkspaceProvider({
       try {
         setIsLoading(true)
         setError(null)
-        const project = await workspaceService.getOrRestoreLastProject()
+        const restoredProject = await workspaceService.getOrRestoreLastProject()
+        const project = restoredProject ?? await workspaceService.createProject('My First Project')
         if (mounted) {
           setActiveProject(project)
         }
@@ -159,15 +160,13 @@ export function WorkspaceProvider({
 
   // ─── Active Project Management ───────────────────────────────────────────────
 
-  const updateActiveProject = useCallback((updates: Partial<Project>) => {
-    setActiveProject(prev => {
-      if (!prev) return null
-      const updated = { ...prev, ...updates, updatedAt: new Date().toISOString() }
-      // Persist to storage
-      workspaceService.saveProject(updated)
-      return updated
-    })
-  }, [])
+  const updateActiveProject = useCallback(async (updates: Partial<Project>): Promise<Project | null> => {
+    if (!activeProject) return null
+    const updated = { ...activeProject, ...updates, updatedAt: new Date().toISOString() }
+    await workspaceService.saveProject(updated)
+    setActiveProject(updated)
+    return updated
+  }, [activeProject])
 
   const value: WorkspaceContextValue = {
     // State

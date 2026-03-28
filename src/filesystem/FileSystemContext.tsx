@@ -27,6 +27,7 @@ interface FileSystemContextValue extends FileSystemState {
   loadFiles: (projectId: string) => Promise<void>
   createFile: (projectId: string, input: CreateFileInput) => Promise<ProjectFile>
   updateFile: (file: ProjectFile, content: string) => Promise<ProjectFile>
+  setFileContentLocally: (fileId: string, content: string) => void
   deleteFile: (fileId: string) => Promise<void>
   upsertFileByName: (projectId: string, name: string, content: string, folderId?: string | null) => Promise<ProjectFile>
   
@@ -134,6 +135,19 @@ export function FileSystemProvider({ children, projectId }: FileSystemProviderPr
       throw err
     }
   }, [activeFile?.id])
+
+  const setFileContentLocally = useCallback((fileId: string, content: string): void => {
+    setFiles(prev => prev.map(file => (
+      file.id === fileId
+        ? { ...file, content, size: content.length, updatedAt: new Date().toISOString() }
+        : file
+    )))
+    setActiveFile(prev => (
+      prev?.id === fileId
+        ? { ...prev, content, size: content.length, updatedAt: new Date().toISOString() }
+        : prev
+    ))
+  }, [])
 
   const deleteFile = useCallback(async (fileId: string): Promise<void> => {
     try {
@@ -328,6 +342,7 @@ export function FileSystemProvider({ children, projectId }: FileSystemProviderPr
     loadFiles,
     createFile,
     updateFile,
+    setFileContentLocally,
     deleteFile,
     upsertFileByName,
     

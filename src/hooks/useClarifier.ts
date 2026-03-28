@@ -58,13 +58,7 @@ export function useClarifier() {
 
     try {
       const { object } = await blink.ai.generateObject({
-        messages: [
-          { role: 'system', content: QUESTION_SYSTEM_PROMPT },
-          {
-            role: 'user',
-            content: `Project idea: "${idea}"\n\nGenerate 6–8 tailored clarifying questions for this specific project.`,
-          },
-        ],
+        prompt: `${QUESTION_SYSTEM_PROMPT}\n\nProject idea: "${idea}"\n\nGenerate 6–8 tailored clarifying questions for this specific project.`,
         schema: {
           type: 'object',
           properties: {
@@ -131,13 +125,7 @@ export function useClarifier() {
     try {
       await blink.ai.streamText(
         {
-          messages: [
-            { role: 'system', content: SUMMARY_SYSTEM_PROMPT },
-            {
-              role: 'user',
-              content: `Project idea: "${projectIdea}"\n\nClarifying answers:\n\n${qaText}\n\nGenerate a complete project specification.`,
-            },
-          ],
+          prompt: `${SUMMARY_SYSTEM_PROMPT}\n\nProject idea: "${projectIdea}"\n\nClarifying answers:\n\n${qaText}\n\nGenerate a complete project specification.`,
         },
         (chunk) => {
           setSummary((prev) => prev + chunk)
